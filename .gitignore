@@ -1,0 +1,4 @@
+/target
+*.backup
+*.bitmap-backup
+*.texture-atlas-backup
