@@ -239,6 +239,40 @@ fn sample_glyph_glow(
         + diagonal * 0.055;
 }
 
+// Very subtle optical distortion and slow lens breathing.
+// This should be felt more than consciously noticed.
+fn camera_sample_uv(
+    uv: vec2<f32>,
+    time: f32,
+    aspect: f32,
+) -> vec2<f32> {
+    var point =
+        uv * 2.0
+        - vec2<f32>(1.0);
+
+    point.x *= aspect;
+
+    let radius_squared =
+        dot(point, point);
+
+    let barrel =
+        1.0
+        + radius_squared * 0.0045;
+
+    let breathing =
+        1.0
+        + sin(time * 0.11) * 0.0016;
+
+    point *=
+        barrel * breathing;
+
+    point.x /= aspect;
+
+    return
+        point * 0.5
+        + vec2<f32>(0.5);
+}
+
 @vertex
 fn vs_main(
     @builtin(vertex_index)
@@ -281,10 +315,38 @@ fn fs_main(
             0.0007,
         );
 
+    let camera_uv =
+        camera_sample_uv(
+            input.uv,
+            uniforms.time,
+            uniforms.aspect,
+        );
+
     let pixel =
+        camera_uv
+        * uniforms.resolution;
+
+    // Slow handheld-style movement measured in pixels. Two frequencies
+    // prevent the motion from reading as a simple pendulum.
+    let camera_sway =
         vec2<f32>(
-            input.uv.x * uniforms.resolution.x,
-            input.uv.y * uniforms.resolution.y,
+            sin(uniforms.time * 0.085)
+                + sin(
+                    uniforms.time * 0.163
+                    + 1.4
+                ) * 0.38,
+
+            cos(
+                uniforms.time * 0.067
+                + 0.7
+            )
+                + sin(
+                    uniforms.time * 0.121
+                ) * 0.31,
+        )
+        * vec2<f32>(
+            3.2,
+            2.4,
         );
 
     var core_energy = 0.0;
@@ -320,11 +382,27 @@ fn fs_main(
         let cascade_intensity =
             stream.extras.z;
 
+        // Foreground streams respond more strongly to camera motion,
+        // creating gentle parallax between the five depth layers.
+        let camera_depth_scale =
+            mix(
+                0.28,
+                1.0,
+                pow(
+                    clamp(depth, 0.0, 1.0),
+                    0.82,
+                ),
+            );
+
         let stream_x =
-            stream.position.x;
+            stream.position.x
+            + camera_sway.x
+                * camera_depth_scale;
 
         let stream_head =
-            stream.position.y;
+            stream.position.y
+            + camera_sway.y
+                * camera_depth_scale;
 
         let brightness =
             stream.position.w;
@@ -611,6 +689,30 @@ fn fs_main(
     color =
         vec3<f32>(1.0)
         - exp(-color * exposure);
+
+    // Slight optical falloff at the edge of the lens.
+    var lens_point =
+        input.uv * 2.0
+        - vec2<f32>(1.0);
+
+    lens_point.x *=
+        uniforms.aspect;
+
+    let lens_radius_squared =
+        dot(
+            lens_point,
+            lens_point,
+        );
+
+    let vignette =
+        1.0
+        - smoothstep(
+            0.55,
+            1.65,
+            lens_radius_squared,
+        ) * 0.10;
+
+    color *= vignette;
 
     return vec4<f32>(
         color,
