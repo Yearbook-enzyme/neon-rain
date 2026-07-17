@@ -1,4 +1,5 @@
 mod atlas;
+mod simulation;
 
 use std::{sync::Arc, time::Instant};
 
