@@ -1,5 +1,4 @@
 mod atlas;
-mod bloom;
 mod simulation;
 
 use std::{sync::Arc, time::Instant};
@@ -16,7 +15,6 @@ use winit::{
 };
 
 use atlas::{ATLAS_HEIGHT, ATLAS_WIDTH, create_glyph_atlas};
-use bloom::{Bloom, HDR_FORMAT};
 use simulation::{GLYPHS_PER_STREAM, Simulation};
 
 #[repr(C)]
@@ -80,7 +78,6 @@ struct State {
     uniform_buffer: wgpu::Buffer,
     stream_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
-    bloom: Bloom,
 
     simulation: Simulation,
     last_frame: Instant,
@@ -318,7 +315,7 @@ impl State {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
 
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: HDR_FORMAT,
+                    format: surface_format,
 
                     blend: Some(wgpu::BlendState::REPLACE),
 
@@ -329,8 +326,6 @@ impl State {
             multiview_mask: None,
             cache: None,
         });
-
-        let bloom = Bloom::new(&device, size.width, size.height, surface_format);
 
         let simulation = Simulation::new(size.width, size.height);
         let now = Instant::now();
@@ -350,7 +345,6 @@ impl State {
             uniform_buffer,
             stream_buffer,
             render_bind_group,
-            bloom,
 
             simulation,
             last_frame: now,
@@ -404,8 +398,6 @@ impl State {
 
         self.size = new_size;
         self.simulation.resize(new_size.width, new_size.height);
-        self.bloom
-            .resize(&self.device, new_size.width, new_size.height);
         self.configure_surface();
     }
 
@@ -560,7 +552,7 @@ impl State {
                 label: Some("Neon Rain render pass"),
 
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.bloom.view,
+                    view: &view,
                     depth_slice: None,
                     resolve_target: None,
 
@@ -583,8 +575,6 @@ impl State {
 
             render_pass.draw(0..3, 0..1);
         }
-
-        self.bloom.composite(&mut encoder, &view);
 
         self.queue.submit([encoder.finish()]);
 
