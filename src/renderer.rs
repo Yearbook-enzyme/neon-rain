@@ -15,13 +15,52 @@ use winit::{
 };
 
 use atlas::{ATLAS_HEIGHT, ATLAS_WIDTH, create_glyph_atlas};
+use simulation::{GLYPHS_PER_STREAM, Simulation};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Uniforms {
     time: f32,
     aspect: f32,
-    padding: [f32; 2],
+    resolution: [f32; 2],
+    controls: [f32; 4],
+    stream_count: u32,
+    padding: [u32; 3],
+}
+
+const MAX_GPU_STREAMS: usize = 512;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuStream {
+    // x, head, speed, brightness
+    position: [f32; 4],
+
+    // length, personality, age, phase
+    parameters: [f32; 4],
+
+    glyphs: [u32; GLYPHS_PER_STREAM],
+}
+
+impl GpuStream {
+    fn from_stream(stream: &simulation::Stream) -> Self {
+        let personality = match stream.personality {
+            simulation::Personality::Steady => 0.0,
+            simulation::Personality::Fast => 1.0,
+            simulation::Personality::Lazy => 2.0,
+            simulation::Personality::Nervous => 3.0,
+            simulation::Personality::Pulse => 4.0,
+            simulation::Personality::Ghost => 5.0,
+        };
+
+        Self {
+            position: [stream.x, stream.head, stream.speed, stream.brightness],
+
+            parameters: [stream.length as f32, personality, stream.age, stream.phase],
+
+            glyphs: stream.glyphs,
+        }
+    }
 }
 
 struct State {
@@ -37,7 +76,16 @@ struct State {
 
     render_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
+    stream_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
+
+    simulation: Simulation,
+    last_frame: Instant,
+
+    paused: bool,
+    speed_scale: f32,
+    glow_strength: f32,
+    exposure: f32,
 
     // These fields keep the GPU resources alive.
     _glyph_texture: wgpu::Texture,
@@ -92,13 +140,24 @@ impl State {
         let initial_uniforms = Uniforms {
             time: 0.0,
             aspect: calculate_aspect(size),
-            padding: [0.0; 2],
+            resolution: [size.width as f32, size.height as f32],
+            controls: [1.0, 1.0, 1.0, 0.0],
+            stream_count: 0,
+            padding: [0; 3],
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Animation uniforms"),
             contents: bytemuck::bytes_of(&initial_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let empty_streams = vec![GpuStream::zeroed(); MAX_GPU_STREAMS];
+
+        let stream_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Persistent stream storage buffer"),
+            contents: bytemuck::cast_slice(&empty_streams),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
         let atlas_data = create_glyph_atlas();
@@ -178,6 +237,18 @@ impl State {
 
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+
+                        count: None,
+                    },
                 ],
             });
 
@@ -197,6 +268,10 @@ impl State {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&glyph_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: stream_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -252,6 +327,9 @@ impl State {
             cache: None,
         });
 
+        let simulation = Simulation::new(size.width, size.height);
+        let now = Instant::now();
+
         let state = Self {
             instance,
             window,
@@ -265,7 +343,16 @@ impl State {
 
             render_pipeline,
             uniform_buffer,
+            stream_buffer,
             render_bind_group,
+
+            simulation,
+            last_frame: now,
+
+            paused: false,
+            speed_scale: 1.0,
+            glow_strength: 1.0,
+            exposure: 1.0,
 
             _glyph_texture: glyph_texture,
             _glyph_texture_view: glyph_texture_view,
@@ -310,7 +397,48 @@ impl State {
         }
 
         self.size = new_size;
+        self.simulation.resize(new_size.width, new_size.height);
         self.configure_surface();
+    }
+
+    fn print_controls(&self) {
+        println!(
+            "paused={}  speed={:.2}  glow={:.2}  exposure={:.2}",
+            self.paused, self.speed_scale, self.glow_strength, self.exposure,
+        );
+    }
+
+    fn apply_preset(&mut self, preset: u8) {
+        match preset {
+            1 => {
+                self.speed_scale = 0.20;
+                self.glow_strength = 0.05;
+                self.exposure = 0.35;
+            }
+
+            2 => {
+                self.speed_scale = 1.0;
+                self.glow_strength = 1.0;
+                self.exposure = 1.0;
+            }
+
+            3 => {
+                self.speed_scale = 2.75;
+                self.glow_strength = 5.0;
+                self.exposure = 2.25;
+            }
+
+            4 => {
+                self.speed_scale = 0.03;
+                self.glow_strength = 4.0;
+                self.exposure = 1.35;
+            }
+
+            _ => return,
+        }
+
+        println!("Applied preset {preset}");
+        self.print_controls();
     }
 
     fn toggle_fullscreen(&self) {
@@ -323,13 +451,42 @@ impl State {
         self.window.set_fullscreen(fullscreen);
     }
 
-    fn update(&self) {
+    fn update(&mut self) {
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_frame).as_secs_f32();
+
+        self.last_frame = now;
+
+        let simulation_dt = if self.paused {
+            0.0
+        } else {
+            dt * self.speed_scale
+        };
+
+        self.simulation.update(simulation_dt);
+
+        let stream_count = self.simulation.streams.len().min(MAX_GPU_STREAMS);
+
+        let gpu_streams: Vec<GpuStream> = self
+            .simulation
+            .streams
+            .iter()
+            .take(stream_count)
+            .map(GpuStream::from_stream)
+            .collect();
+
+        if !gpu_streams.is_empty() {
+            self.queue
+                .write_buffer(&self.stream_buffer, 0, bytemuck::cast_slice(&gpu_streams));
+        }
+
         let uniforms = Uniforms {
             time: self.start_time.elapsed().as_secs_f32(),
-
             aspect: calculate_aspect(self.size),
-
-            padding: [0.0; 2],
+            resolution: [self.size.width as f32, self.size.height as f32],
+            controls: [self.speed_scale, self.glow_strength, self.exposure, 0.0],
+            stream_count: stream_count as u32,
+            padding: [0; 3],
         };
 
         self.queue
@@ -501,6 +658,69 @@ impl ApplicationHandler for App {
 
                 KeyCode::F11 => {
                     state.toggle_fullscreen();
+                }
+
+                KeyCode::Space => {
+                    state.paused = !state.paused;
+                    state.print_controls();
+                }
+
+                KeyCode::KeyR => {
+                    state.simulation = Simulation::new(state.size.width, state.size.height);
+
+                    println!("Regenerated all persistent streams");
+                }
+
+                KeyCode::ArrowUp => {
+                    state.speed_scale = (state.speed_scale + 0.25).min(5.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::ArrowDown => {
+                    state.speed_scale = (state.speed_scale - 0.25).max(0.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::ArrowRight => {
+                    state.glow_strength = (state.glow_strength + 0.50).min(8.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::ArrowLeft => {
+                    state.glow_strength = (state.glow_strength - 0.50).max(0.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::KeyE => {
+                    state.exposure = (state.exposure + 0.20).min(4.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::KeyQ => {
+                    state.exposure = (state.exposure - 0.20).max(0.10);
+
+                    state.print_controls();
+                }
+
+                KeyCode::Digit1 => {
+                    state.apply_preset(1);
+                }
+
+                KeyCode::Digit2 => {
+                    state.apply_preset(2);
+                }
+
+                KeyCode::Digit3 => {
+                    state.apply_preset(3);
+                }
+
+                KeyCode::Digit4 => {
+                    state.apply_preset(4);
                 }
 
                 _ => {}
