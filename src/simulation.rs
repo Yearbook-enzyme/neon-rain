@@ -32,6 +32,13 @@ pub struct Stream {
 
     // Persistent lane offset prevents perfectly regular spacing.
     pub lane_offset: f32,
+
+    // Rare energy packet travelling from the head toward the tail.
+    // Position is normalized: 0.0 = head, 1.0 = end of trail.
+    pub cascade_position: f32,
+    pub cascade_speed: f32,
+    pub cascade_intensity: f32,
+    cascade_timer: f32,
 }
 
 pub struct Simulation {
@@ -116,6 +123,8 @@ impl Simulation {
 
         for index in 0..self.streams.len() {
             let mut should_respawn = false;
+            let mut should_start_cascade = false;
+            let mut should_finish_cascade = false;
 
             {
                 let stream = &mut self.streams[index];
@@ -123,6 +132,15 @@ impl Simulation {
                 stream.age += dt;
                 stream.phase += dt;
                 stream.mutation_timer -= dt;
+                stream.cascade_timer -= dt;
+
+                if stream.cascade_intensity > 0.0 {
+                    stream.cascade_position += stream.cascade_speed * dt;
+
+                    if stream.cascade_position > 1.12 {
+                        should_finish_cascade = true;
+                    }
+                }
 
                 let personality_speed = match stream.personality {
                     Personality::Steady => 1.0,
@@ -182,6 +200,15 @@ impl Simulation {
                     * depth_brightness
                     * weather.brightness;
 
+                if stream.cascade_intensity <= 0.0
+                    && stream.cascade_timer <= 0.0
+                    && stream.age > 1.0
+                    && remaining > 2.0
+                    && stream.brightness > 0.18
+                {
+                    should_start_cascade = true;
+                }
+
                 let glyph_height = 13.0 + stream.depth * 15.0;
 
                 let trail_height = stream.length as f32 * glyph_height;
@@ -197,8 +224,63 @@ impl Simulation {
 
             if should_respawn {
                 self.streams[index] = self.create_stream(index, false);
+                continue;
+            }
+
+            if should_finish_cascade {
+                self.finish_cascade(index);
+            } else if should_start_cascade {
+                self.start_cascade(index);
             }
         }
+    }
+
+    fn next_cascade_delay(&mut self, personality: Personality) -> f32 {
+        match personality {
+            Personality::Steady => self.rng.range(50.0, 100.0),
+            Personality::Fast => self.rng.range(35.0, 80.0),
+            Personality::Lazy => self.rng.range(70.0, 140.0),
+            Personality::Nervous => self.rng.range(30.0, 70.0),
+            Personality::Pulse => self.rng.range(15.0, 35.0),
+            Personality::Ghost => self.rng.range(90.0, 180.0),
+        }
+    }
+
+    fn start_cascade(&mut self, index: usize) {
+        let personality = self.streams[index].personality;
+
+        let cascade_speed = match personality {
+            Personality::Fast => self.rng.range(0.95, 1.45),
+            Personality::Lazy => self.rng.range(0.58, 0.90),
+            Personality::Nervous => self.rng.range(0.90, 1.38),
+            Personality::Pulse => self.rng.range(0.78, 1.28),
+            Personality::Ghost => self.rng.range(0.62, 0.96),
+            Personality::Steady => self.rng.range(0.72, 1.12),
+        };
+
+        let cascade_intensity = match personality {
+            Personality::Pulse => self.rng.range(1.10, 1.48),
+            Personality::Ghost => self.rng.range(0.62, 0.92),
+            _ => self.rng.range(0.86, 1.24),
+        };
+
+        let stream = &mut self.streams[index];
+
+        stream.cascade_position = -0.08;
+        stream.cascade_speed = cascade_speed;
+        stream.cascade_intensity = cascade_intensity;
+    }
+
+    fn finish_cascade(&mut self, index: usize) {
+        let personality = self.streams[index].personality;
+        let next_delay = self.next_cascade_delay(personality);
+
+        let stream = &mut self.streams[index];
+
+        stream.cascade_position = -1.0;
+        stream.cascade_speed = 0.0;
+        stream.cascade_intensity = 0.0;
+        stream.cascade_timer = next_delay;
     }
 
     fn mutate_stream(&mut self, index: usize) {
@@ -286,6 +368,14 @@ impl Simulation {
             Personality::Steady => self.rng.range(74.0, 158.0),
         };
 
+        let initial_delay_scale = if initial {
+            self.rng.range(0.08, 1.0)
+        } else {
+            1.0
+        };
+
+        let cascade_timer = self.next_cascade_delay(personality) * initial_delay_scale;
+
         Stream {
             x,
             head,
@@ -305,6 +395,10 @@ impl Simulation {
             depth,
             drift: self.rng.range(-3.2, 3.2),
             lane_offset,
+            cascade_position: -1.0,
+            cascade_speed: 0.0,
+            cascade_intensity: 0.0,
+            cascade_timer,
         }
     }
 }

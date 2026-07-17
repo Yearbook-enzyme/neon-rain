@@ -41,6 +41,9 @@ struct GpuStream {
     // length, personality, age, phase
     parameters: [f32; 4],
 
+    // depth, cascade position, cascade intensity, reserved
+    extras: [f32; 4],
+
     glyphs: [u32; GLYPHS_PER_STREAM],
 }
 
@@ -59,6 +62,13 @@ impl GpuStream {
             position: [stream.x, stream.head, stream.speed, stream.brightness],
 
             parameters: [stream.length as f32, personality, stream.age, stream.phase],
+
+            extras: [
+                stream.depth,
+                stream.cascade_position,
+                stream.cascade_intensity,
+                0.0,
+            ],
 
             glyphs: stream.glyphs,
         }
@@ -89,6 +99,7 @@ struct State {
     speed_scale: f32,
     glow_strength: f32,
     exposure: f32,
+    target_exposure: f32,
 
     // These fields keep the GPU resources alive.
     _glyph_texture: wgpu::Texture,
@@ -359,6 +370,7 @@ impl State {
             speed_scale: 1.0,
             glow_strength: 1.0,
             exposure: 1.0,
+            target_exposure: 1.0,
 
             _glyph_texture: glyph_texture,
             _glyph_texture_view: glyph_texture_view,
@@ -474,6 +486,12 @@ impl State {
         self.simulation.update(simulation_dt);
 
         let stream_count = self.simulation.streams.len().min(MAX_GPU_STREAMS);
+
+        let stream_fraction = stream_count as f32 / MAX_GPU_STREAMS as f32;
+        self.target_exposure = 1.35 - stream_fraction * 0.45;
+
+        let adapt_speed = 2.0;
+        self.exposure += (self.target_exposure - self.exposure) * (1.0 - (-adapt_speed * dt).exp());
 
         let gpu_streams: Vec<GpuStream> = self
             .simulation
