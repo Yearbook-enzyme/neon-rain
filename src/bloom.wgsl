@@ -135,6 +135,22 @@ var bloom_texture: texture_2d<f32>;
 var composite_sampler: sampler;
 
 
+fn aces_tonemap(color: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+
+    return clamp(
+        (color * (a * color + b)) /
+        (color * (c * color + d) + e),
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
+}
+
+
 @fragment
 fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
     let original = textureSample(
@@ -152,5 +168,8 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
     // Increase or reduce this number later to tune real bloom intensity.
     let bloom_strength = 1.15;
 
-    return vec4<f32>(original + bloom * bloom_strength, 1.0);
+    let hdr_color = original + bloom * bloom_strength;
+    let mapped_color = aces_tonemap(hdr_color);
+
+    return vec4<f32>(mapped_color, 1.0);
 }
