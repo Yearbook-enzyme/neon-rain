@@ -23,6 +23,7 @@ struct Uniforms {
     time: f32,
     aspect: f32,
     resolution: [f32; 2],
+    controls: [f32; 4],
     stream_count: u32,
     padding: [u32; 3],
 }
@@ -81,6 +82,11 @@ struct State {
     simulation: Simulation,
     last_frame: Instant,
 
+    paused: bool,
+    speed_scale: f32,
+    glow_strength: f32,
+    exposure: f32,
+
     // These fields keep the GPU resources alive.
     _glyph_texture: wgpu::Texture,
     _glyph_texture_view: wgpu::TextureView,
@@ -135,6 +141,7 @@ impl State {
             time: 0.0,
             aspect: calculate_aspect(size),
             resolution: [size.width as f32, size.height as f32],
+            controls: [1.0, 1.0, 1.0, 0.0],
             stream_count: 0,
             padding: [0; 3],
         };
@@ -342,6 +349,11 @@ impl State {
             simulation,
             last_frame: now,
 
+            paused: false,
+            speed_scale: 1.0,
+            glow_strength: 1.0,
+            exposure: 1.0,
+
             _glyph_texture: glyph_texture,
             _glyph_texture_view: glyph_texture_view,
             _glyph_sampler: glyph_sampler,
@@ -389,6 +401,46 @@ impl State {
         self.configure_surface();
     }
 
+    fn print_controls(&self) {
+        println!(
+            "paused={}  speed={:.2}  glow={:.2}  exposure={:.2}",
+            self.paused, self.speed_scale, self.glow_strength, self.exposure,
+        );
+    }
+
+    fn apply_preset(&mut self, preset: u8) {
+        match preset {
+            1 => {
+                self.speed_scale = 0.20;
+                self.glow_strength = 0.05;
+                self.exposure = 0.35;
+            }
+
+            2 => {
+                self.speed_scale = 1.0;
+                self.glow_strength = 1.0;
+                self.exposure = 1.0;
+            }
+
+            3 => {
+                self.speed_scale = 2.75;
+                self.glow_strength = 5.0;
+                self.exposure = 2.25;
+            }
+
+            4 => {
+                self.speed_scale = 0.03;
+                self.glow_strength = 4.0;
+                self.exposure = 1.35;
+            }
+
+            _ => return,
+        }
+
+        println!("Applied preset {preset}");
+        self.print_controls();
+    }
+
     fn toggle_fullscreen(&self) {
         let fullscreen = if self.window.fullscreen().is_some() {
             None
@@ -404,7 +456,14 @@ impl State {
         let dt = now.duration_since(self.last_frame).as_secs_f32();
 
         self.last_frame = now;
-        self.simulation.update(dt);
+
+        let simulation_dt = if self.paused {
+            0.0
+        } else {
+            dt * self.speed_scale
+        };
+
+        self.simulation.update(simulation_dt);
 
         let stream_count = self.simulation.streams.len().min(MAX_GPU_STREAMS);
 
@@ -425,6 +484,7 @@ impl State {
             time: self.start_time.elapsed().as_secs_f32(),
             aspect: calculate_aspect(self.size),
             resolution: [self.size.width as f32, self.size.height as f32],
+            controls: [self.speed_scale, self.glow_strength, self.exposure, 0.0],
             stream_count: stream_count as u32,
             padding: [0; 3],
         };
@@ -575,13 +635,6 @@ impl ApplicationHandler for App {
             return;
         }
 
-        if let WindowEvent::KeyboardInput { event, .. } = &event {
-            println!(
-                "KEY EVENT: physical={:?}, logical={:?}, state={:?}, repeat={}",
-                event.physical_key, event.logical_key, event.state, event.repeat,
-            );
-        }
-
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -605,6 +658,69 @@ impl ApplicationHandler for App {
 
                 KeyCode::F11 => {
                     state.toggle_fullscreen();
+                }
+
+                KeyCode::Space => {
+                    state.paused = !state.paused;
+                    state.print_controls();
+                }
+
+                KeyCode::KeyR => {
+                    state.simulation = Simulation::new(state.size.width, state.size.height);
+
+                    println!("Regenerated all persistent streams");
+                }
+
+                KeyCode::ArrowUp => {
+                    state.speed_scale = (state.speed_scale + 0.25).min(5.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::ArrowDown => {
+                    state.speed_scale = (state.speed_scale - 0.25).max(0.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::ArrowRight => {
+                    state.glow_strength = (state.glow_strength + 0.50).min(8.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::ArrowLeft => {
+                    state.glow_strength = (state.glow_strength - 0.50).max(0.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::KeyE => {
+                    state.exposure = (state.exposure + 0.20).min(4.0);
+
+                    state.print_controls();
+                }
+
+                KeyCode::KeyQ => {
+                    state.exposure = (state.exposure - 0.20).max(0.10);
+
+                    state.print_controls();
+                }
+
+                KeyCode::Digit1 => {
+                    state.apply_preset(1);
+                }
+
+                KeyCode::Digit2 => {
+                    state.apply_preset(2);
+                }
+
+                KeyCode::Digit3 => {
+                    state.apply_preset(3);
+                }
+
+                KeyCode::Digit4 => {
+                    state.apply_preset(4);
                 }
 
                 _ => {}

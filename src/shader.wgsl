@@ -2,6 +2,7 @@ struct Uniforms {
     time: f32,
     aspect: f32,
     resolution: vec2<f32>,
+    controls: vec4<f32>,
     stream_count: u32,
     padding0: u32,
     padding1: u32,
@@ -446,19 +447,27 @@ fn fs_main(
             0.84,
         );
 
+    let glow_control =
+        uniforms.controls.y;
+
     var color =
         background
         + green * core_energy
-        + glow_green * glow_energy
+        + glow_green
+            * glow_energy
+            * glow_control
         + white_head * head_energy;
 
     /*
     Soft compression keeps overlapping streams bright
     without clipping everything directly to white.
     */
+    let exposure =
+        max(uniforms.controls.z, 0.01);
+
     color =
         vec3<f32>(1.0)
-        - exp(-color);
+        - exp(-color * exposure);
 
     return vec4<f32>(
         color,
