@@ -41,6 +41,9 @@ pub struct Simulation {
     height: f32,
     columns: usize,
     layers: usize,
+
+    // Shared environmental clock for broad, coherent rain behavior.
+    weather_time: f32,
 }
 
 impl Simulation {
@@ -52,6 +55,7 @@ impl Simulation {
             height: height.max(1) as f32,
             columns: 1,
             layers: 5,
+            weather_time: 0.0,
         };
 
         simulation.resize(width, height);
@@ -104,6 +108,12 @@ impl Simulation {
     pub fn update(&mut self, dt: f32) {
         let dt = dt.clamp(0.0, 0.05);
 
+        self.weather_time = (self.weather_time + dt).rem_euclid(10_000.0);
+
+        // Copy these before borrowing individual streams mutably.
+        let weather_time = self.weather_time;
+        let weather_width = self.width;
+
         for index in 0..self.streams.len() {
             let mut should_respawn = false;
 
@@ -126,7 +136,11 @@ impl Simulation {
                 // Background streams move more slowly.
                 let depth_speed = 0.52 + stream.depth * 0.70;
 
-                stream.head += stream.speed * personality_speed * depth_speed * dt;
+                // Nearby streams sample the same broad environmental field.
+                // This produces moving rain fronts instead of independent noise.
+                let weather = sample_weather(stream.x, stream.depth, weather_time, weather_width);
+
+                stream.head += stream.speed * personality_speed * depth_speed * weather.speed * dt;
 
                 let drift_wave = (stream.phase * (0.22 + stream.depth * 0.16)).sin();
 
@@ -135,7 +149,7 @@ impl Simulation {
                     _ => 0.0,
                 };
 
-                stream.x += (stream.drift * drift_wave + nervous_jitter) * dt;
+                stream.x += (stream.drift * drift_wave + nervous_jitter + weather.wind) * dt;
 
                 stream.x = stream.x.rem_euclid(self.width);
 
@@ -161,8 +175,12 @@ impl Simulation {
                 // Distant streams remain dim while foreground streams pop.
                 let depth_brightness = 0.26 + stream.depth * 0.86;
 
-                stream.brightness =
-                    fade_in * fade_out * pulse * personality_brightness * depth_brightness;
+                stream.brightness = fade_in
+                    * fade_out
+                    * pulse
+                    * personality_brightness
+                    * depth_brightness
+                    * weather.brightness;
 
                 let glyph_height = 13.0 + stream.depth * 15.0;
 
@@ -288,6 +306,41 @@ impl Simulation {
             drift: self.rng.range(-3.2, 3.2),
             lane_offset,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WeatherSample {
+    speed: f32,
+    brightness: f32,
+
+    // Horizontal velocity in pixels per second.
+    wind: f32,
+}
+
+fn sample_weather(x: f32, depth: f32, time: f32, width: f32) -> WeatherSample {
+    let normalized_x = x / width.max(1.0);
+    let tau = std::f32::consts::TAU;
+
+    // Roughly one broad front spans the screen. It moves slowly from
+    // left to right, brightening and accelerating many streams together.
+    let front_phase = normalized_x * tau * 1.35 - time * 0.18;
+    let front_wave = 0.5 + 0.5 * front_phase.sin();
+
+    // Smoothstep keeps the front broad while giving it a recognizable center.
+    let front = front_wave * front_wave * (3.0 - 2.0 * front_wave);
+
+    // Smaller regional variation prevents the front from looking like a
+    // perfectly uniform vertical brightness mask.
+    let turbulence = (normalized_x * tau * 2.7 + time * 0.31 + depth * 0.85).sin();
+
+    // A very slow wind layer gently shifts whole regions sideways.
+    let wind_wave = (normalized_x * tau * 0.62 - time * 0.07).sin();
+
+    WeatherSample {
+        speed: (0.82 + front * 0.38 + turbulence * 0.08).clamp(0.68, 1.32),
+        brightness: (0.78 + front * 0.62 + turbulence * 0.10).clamp(0.62, 1.55),
+        wind: wind_wave * 4.5 + turbulence * 2.0 * (0.4 + depth * 0.6),
     }
 }
 
