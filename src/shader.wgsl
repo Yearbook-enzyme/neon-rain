@@ -1,7 +1,11 @@
 struct Uniforms {
     time: f32,
     aspect: f32,
-    padding: vec2<f32>,
+    resolution: vec2<f32>,
+    stream_count: u32,
+    padding0: u32,
+    padding1: u32,
+    padding2: u32,
 };
 
 @group(0) @binding(0)
@@ -12,6 +16,19 @@ var glyph_atlas: texture_2d<f32>;
 
 @group(0) @binding(2)
 var glyph_sampler: sampler;
+
+struct GpuStream {
+    // x, head, speed, brightness
+    position: vec4<f32>,
+
+    // length, personality, age, phase
+    parameters: vec4<f32>,
+
+    glyphs: array<u32, 64>,
+};
+
+@group(0) @binding(3)
+var<storage, read> streams: array<GpuStream>;
 
 struct VertexOutput {
     @builtin(position)
@@ -255,412 +272,193 @@ fn fs_main(
 ) -> @location(0) vec4<f32> {
     let background =
         vec3<f32>(
-            0.0003,
-            0.003,
-            0.001,
+            0.00025,
+            0.0022,
+            0.0007,
+        );
+
+    let pixel =
+        vec2<f32>(
+            input.uv.x * uniforms.resolution.x,
+            input.uv.y * uniforms.resolution.y,
         );
 
     var core_energy = 0.0;
-    var near_glow_energy = 0.0;
-    var wide_glow_energy = 0.0;
+    var glow_energy = 0.0;
     var head_energy = 0.0;
 
-    let layer_count = 3u;
-    let columns_per_layer = 26u;
-    let trail_segments = 18u;
+    let glyph_width = 16.0;
+    let glyph_height = 24.0;
 
     for (
-        var layer_index = 0u;
-        layer_index < layer_count;
-        layer_index = layer_index + 1u
+        var stream_index = 0u;
+        stream_index < 512u;
+        stream_index = stream_index + 1u
     ) {
-        let layer =
-            f32(layer_index);
-
-        let depth =
-            layer
-            / f32(
-                layer_count - 1u,
-            );
-
-        let perspective_scale =
-            mix(
-                0.58,
-                1.32,
-                depth,
-            );
-
-        let layer_brightness =
-            mix(
-                0.22,
-                1.0,
-                depth,
-            );
-
-        let layer_speed =
-            mix(
-                0.42,
-                1.30,
-                depth,
-            );
-
-        for (
-            var column_index = 0u;
-            column_index
-                < columns_per_layer;
-            column_index =
-                column_index + 1u
+        if (
+            stream_index
+            >= uniforms.stream_count
         ) {
-            let column =
-                f32(column_index);
+            break;
+        }
 
-            let seed =
-                column
-                + layer * 127.0
-                + 1.0;
+        let stream =
+            streams[stream_index];
 
-            let regular_x =
-                (
-                    column + 0.5
-                )
-                / f32(
-                    columns_per_layer,
-                );
+        let stream_x =
+            stream.position.x;
 
-            let horizontal_drift =
-                sin(
-                    uniforms.time
-                        * mix(
-                            0.025,
-                            0.075,
-                            depth,
-                        )
-                    + seed,
-                )
-                * mix(
-                    0.003,
-                    0.014,
-                    depth,
-                );
+        let stream_head =
+            stream.position.y;
 
-            let perspective_x =
-                0.5
-                + (
-                    regular_x - 0.5
-                )
-                    * perspective_scale
-                + horizontal_drift;
+        let brightness =
+            stream.position.w;
 
-            let speed =
-                (
-                    0.07
-                    + random(
-                        seed * 3.17,
-                    ) * 0.21
-                )
-                * layer_speed;
+        let stream_length =
+            u32(stream.parameters.x);
 
-            let phase =
-                random(
-                    seed * 8.41,
-                );
+        let horizontal_distance =
+            abs(pixel.x - stream_x);
 
-            let stream_length =
-                (
-                    0.15
-                    + random(
-                        seed * 4.73,
-                    ) * 0.29
-                )
-                * mix(
-                    0.75,
-                    1.15,
-                    depth,
-                );
+        /*
+        Skip texture work for pixels nowhere near
+        this stream.
+        */
+        if (
+            horizontal_distance
+            > glyph_width * 1.8
+        ) {
+            continue;
+        }
 
-            let head_y =
-                1.25
-                - fract(
-                    uniforms.time
-                        * speed
-                    + phase,
-                ) * 1.65;
+        let distance_behind_head =
+            stream_head - pixel.y;
 
-            let cell_height =
-                stream_length
-                / f32(
-                    trail_segments,
-                );
+        if (
+            distance_behind_head
+            < -glyph_height * 0.55
+        ) {
+            continue;
+        }
 
-            for (
-                var segment_index = 0u;
-                segment_index
-                    < trail_segments;
-                segment_index =
-                    segment_index + 1u
-            ) {
-                let segment =
-                    f32(segment_index);
+        let segment_float =
+            floor(
+                distance_behind_head
+                / glyph_height
+                + 0.5
+            );
 
-                let segment_y =
-                    head_y
-                    + segment
-                        * cell_height;
+        if (segment_float < 0.0) {
+            continue;
+        }
 
-                var offset =
-                    input.uv
-                    - vec2<f32>(
-                        perspective_x,
-                        segment_y,
-                    );
+        let segment =
+            u32(segment_float);
 
-                offset.x *=
-                    uniforms.aspect;
+        if (segment >= stream_length) {
+            continue;
+        }
 
-                let half_width =
-                    (
-                        0.0065
-                        + random(
-                            seed * 13.1,
-                        ) * 0.0022
-                    )
-                    * mix(
-                        0.65,
-                        1.22,
-                        depth,
-                    );
+        let glyph_center_y =
+            stream_head
+            - f32(segment)
+                * glyph_height;
 
-                let half_height =
-                    cell_height
-                    * mix(
-                        0.34,
-                        0.44,
-                        depth,
-                    );
+        let local_point =
+            vec2<f32>(
+                (pixel.x - stream_x)
+                    / (glyph_width * 0.5),
 
-                let cell_distance =
-                    rectangle_distance(
-                        offset,
-                        vec2<f32>(
-                            half_width,
-                            half_height,
-                        ),
-                    );
+                (pixel.y - glyph_center_y)
+                    / (glyph_height * 0.5),
+            );
 
-                let local_point =
-                    vec2<f32>(
-                        offset.x
-                            / half_width,
+        let glyph_index =
+            stream.glyphs[
+                segment % 64u
+            ];
 
-                        offset.y
-                            / half_height,
-                    );
+        let trail_position =
+            f32(segment)
+            / max(
+                f32(stream_length - 1u),
+                1.0,
+            );
 
-                let mutation_rate =
-                    mix(
-                        3.0,
-                        8.0,
-                        depth,
-                    );
+        let trail_fade =
+            pow(
+                1.0 - trail_position,
+                1.65,
+            );
 
-                let animation_step =
-                    floor(
-                        uniforms.time
-                            * mutation_rate,
-                    );
+        let glyph_core =
+            sample_glyph(
+                local_point,
+                glyph_index,
+            );
 
-                let glyph_random =
-                    random(
-                        seed * 31.7
-                        + segment * 17.3
-                        + animation_step
-                            * 0.71,
-                    );
+        let glyph_glow =
+            sample_glyph_glow(
+                local_point,
+                glyph_index,
+                0.12,
+            );
 
-                let glyph_index =
-                    min(
-                        u32(
-                            floor(
-                                glyph_random * 64.0,
-                            ),
-                        ),
-                        63u,
-                    );
+        let stream_energy =
+            brightness
+            * trail_fade;
 
-                let glyph =
-                    sample_glyph(
-                        local_point,
-                        glyph_index,
-                    );
+        core_energy +=
+            glyph_core
+            * stream_energy;
 
-                let near_glyph_glow =
-                    sample_glyph_glow(
-                        local_point,
-                        glyph_index,
-                        0.13,
-                    );
+        glow_energy +=
+            glyph_glow
+            * stream_energy
+            * 0.42;
 
-                let wide_glyph_glow =
-                    sample_glyph_glow(
-                        local_point,
-                        glyph_index,
-                        0.28,
-                    );
-
-                let edge_softness =
-                    mix(
-                        0.0006,
-                        0.0012,
-                        depth,
-                    );
-
-                let cell_mask =
-                    1.0
-                    - smoothstep(
-                        -edge_softness,
-                        edge_softness,
-                        cell_distance,
-                    );
-
-                let core =
-                    smoothstep(
-                        0.18,
-                        0.72,
-                        glyph,
-                    ) * cell_mask;
-
-                let trail_position =
-                    segment
-                    / f32(
-                        trail_segments - 1u,
-                    );
-
-                let fade =
-                    pow(
-                        1.0
-                            - trail_position,
-                        2.15,
-                    );
-
-                let flicker =
-                    0.66
-                    + random(
-                        seed * 17.0
-                        + segment * 23.0
-                        + floor(
-                            uniforms.time
-                                * mix(
-                                    4.0,
-                                    9.0,
-                                    depth,
-                                ),
-                        ),
-                    ) * 0.34;
-
-                let segment_energy =
-                    fade
-                    * flicker
-                    * layer_brightness;
-
-                core_energy =
-                    max(
-                        core_energy,
-                        core
-                            * segment_energy,
-                    );
-
-                near_glow_energy +=
-                    near_glyph_glow
-                    * segment_energy
-                    * mix(
-                        0.025,
-                        0.10,
-                        depth,
-                    );
-
-                wide_glow_energy +=
-                    wide_glyph_glow
-                    * segment_energy
-                    * mix(
-                        0.008,
-                        0.04,
-                        depth,
-                    );
-
-                let is_head =
-                    1.0
-                    - step(
-                        0.5,
-                        segment,
-                    );
-
-                head_energy =
-                    max(
-                        head_energy,
-
-                        core
-                        * is_head
-                        * layer_brightness
-                        * mix(
-                            0.25,
-                            1.0,
-                            depth,
-                        ),
-                    );
-            }
+        if (segment == 0u) {
+            head_energy +=
+                glyph_core
+                * brightness
+                * 1.8;
         }
     }
 
-    near_glow_energy =
-        min(
-            near_glow_energy,
-            1.6,
+    let green =
+        vec3<f32>(
+            0.03,
+            1.0,
+            0.27,
         );
 
-    wide_glow_energy =
-        min(
-            wide_glow_energy,
-            1.5,
-        );
-
-    let atmospheric_green =
+    let glow_green =
         vec3<f32>(
             0.0,
-            0.22,
-            0.024,
+            0.38,
+            0.075,
         );
 
-    let near_glow_green =
+    let white_head =
         vec3<f32>(
-            0.0,
-            0.44,
-            0.045,
-        );
-
-    let matrix_green =
-        vec3<f32>(
-            0.012,
+            0.78,
             1.0,
-            0.11,
+            0.84,
         );
 
-    let head_white =
-        vec3<f32>(
-            0.70,
-            1.0,
-            0.77,
-        );
-
-    let color =
+    var color =
         background
-        + atmospheric_green
-            * wide_glow_energy
-        + near_glow_green
-            * near_glow_energy
-        + matrix_green
-            * core_energy
-        + head_white
-            * head_energy;
+        + green * core_energy
+        + glow_green * glow_energy
+        + white_head * head_energy;
+
+    /*
+    Soft compression keeps overlapping streams bright
+    without clipping everything directly to white.
+    */
+    color =
+        vec3<f32>(1.0)
+        - exp(-color);
 
     return vec4<f32>(
         color,

@@ -15,51 +15,13 @@ use winit::{
 };
 
 use atlas::{ATLAS_HEIGHT, ATLAS_WIDTH, create_glyph_atlas};
-use simulation::{GLYPHS_PER_STREAM, Simulation};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Uniforms {
     time: f32,
     aspect: f32,
-    resolution: [f32; 2],
-    stream_count: u32,
-    padding: [u32; 3],
-}
-
-const MAX_GPU_STREAMS: usize = 512;
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuStream {
-    // x, head, speed, brightness
-    position: [f32; 4],
-
-    // length, personality, age, phase
-    parameters: [f32; 4],
-
-    glyphs: [u32; GLYPHS_PER_STREAM],
-}
-
-impl GpuStream {
-    fn from_stream(stream: &simulation::Stream) -> Self {
-        let personality = match stream.personality {
-            simulation::Personality::Steady => 0.0,
-            simulation::Personality::Fast => 1.0,
-            simulation::Personality::Lazy => 2.0,
-            simulation::Personality::Nervous => 3.0,
-            simulation::Personality::Pulse => 4.0,
-            simulation::Personality::Ghost => 5.0,
-        };
-
-        Self {
-            position: [stream.x, stream.head, stream.speed, stream.brightness],
-
-            parameters: [stream.length as f32, personality, stream.age, stream.phase],
-
-            glyphs: stream.glyphs,
-        }
-    }
+    padding: [f32; 2],
 }
 
 struct State {
@@ -75,11 +37,7 @@ struct State {
 
     render_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
-    stream_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
-
-    simulation: Simulation,
-    last_frame: Instant,
 
     // These fields keep the GPU resources alive.
     _glyph_texture: wgpu::Texture,
@@ -134,23 +92,13 @@ impl State {
         let initial_uniforms = Uniforms {
             time: 0.0,
             aspect: calculate_aspect(size),
-            resolution: [size.width as f32, size.height as f32],
-            stream_count: 0,
-            padding: [0; 3],
+            padding: [0.0; 2],
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Animation uniforms"),
             contents: bytemuck::bytes_of(&initial_uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let empty_streams = vec![GpuStream::zeroed(); MAX_GPU_STREAMS];
-
-        let stream_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Persistent stream storage buffer"),
-            contents: bytemuck::cast_slice(&empty_streams),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
 
         let atlas_data = create_glyph_atlas();
@@ -230,18 +178,6 @@ impl State {
 
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-
-                        count: None,
-                    },
                 ],
             });
 
@@ -261,10 +197,6 @@ impl State {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&glyph_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: stream_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -320,9 +252,6 @@ impl State {
             cache: None,
         });
 
-        let simulation = Simulation::new(size.width, size.height);
-        let now = Instant::now();
-
         let state = Self {
             instance,
             window,
@@ -336,11 +265,7 @@ impl State {
 
             render_pipeline,
             uniform_buffer,
-            stream_buffer,
             render_bind_group,
-
-            simulation,
-            last_frame: now,
 
             _glyph_texture: glyph_texture,
             _glyph_texture_view: glyph_texture_view,
@@ -385,7 +310,6 @@ impl State {
         }
 
         self.size = new_size;
-        self.simulation.resize(new_size.width, new_size.height);
         self.configure_surface();
     }
 
@@ -399,34 +323,13 @@ impl State {
         self.window.set_fullscreen(fullscreen);
     }
 
-    fn update(&mut self) {
-        let now = Instant::now();
-        let dt = now.duration_since(self.last_frame).as_secs_f32();
-
-        self.last_frame = now;
-        self.simulation.update(dt);
-
-        let stream_count = self.simulation.streams.len().min(MAX_GPU_STREAMS);
-
-        let gpu_streams: Vec<GpuStream> = self
-            .simulation
-            .streams
-            .iter()
-            .take(stream_count)
-            .map(GpuStream::from_stream)
-            .collect();
-
-        if !gpu_streams.is_empty() {
-            self.queue
-                .write_buffer(&self.stream_buffer, 0, bytemuck::cast_slice(&gpu_streams));
-        }
-
+    fn update(&self) {
         let uniforms = Uniforms {
             time: self.start_time.elapsed().as_secs_f32(),
+
             aspect: calculate_aspect(self.size),
-            resolution: [self.size.width as f32, self.size.height as f32],
-            stream_count: stream_count as u32,
-            padding: [0; 3],
+
+            padding: [0.0; 2],
         };
 
         self.queue
