@@ -100,10 +100,15 @@ fn fs_history(input: VertexOutput) -> @location(0) vec4<f32> {
         input.uv
     ).rgb;
 
-    // Pull old light slightly upward in texture space so its screen-space trail
-    // lingers behind the downward-moving glyphs.
+    // Bloom is vertically flipped during final composition.
+    // Sampling previous history at a slightly larger texture Y
+    // therefore moves retained light downward on the screen.
     let history_uv = clamp(
-        input.uv,
+        input.uv
+            + vec2<f32>(
+                0.0,
+                texel.y * 0.55
+            ),
         vec2<f32>(0.0),
         vec2<f32>(1.0)
     );
@@ -114,10 +119,24 @@ fn fs_history(input: VertexOutput) -> @location(0) vec4<f32> {
         history_uv
     ).rgb;
 
-    let retained = previous * 0.925;
-    let deposited = current * 0.34;
+    // Normalized accumulation prevents old bloom from building
+    // into persistent pale blobs.
+    let retained =
+        previous * 0.88;
 
-    return vec4<f32>(max(current * 0.55, retained + deposited), 1.0);
+    let deposited =
+        current * 0.12;
+
+    let history =
+        max(
+            current * 0.55,
+            retained + deposited
+        );
+
+    return vec4<f32>(
+        history,
+        1.0
+    );
 }
 
 @group(0) @binding(0)
@@ -187,8 +206,8 @@ fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {
     let dimensions = vec2<f32>(textureDimensions(input_texture));
     let texel = vec2<f32>(0.0, 1.0 / dimensions.y);
 
-    // Directional kernel: most energy trails in one direction rather than
-    // expanding equally above and below the source.
+    // Positive texture Y becomes downward screen motion after
+    // bloom is vertically corrected during final composition.
     var color = textureSample(
         input_texture,
         input_sampler,
@@ -198,25 +217,26 @@ fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {
     color += textureSample(
         input_texture,
         input_sampler,
-        input.uv - texel * 1.5
+        input.uv + texel * 1.5
     ).rgb * 0.28;
 
     color += textureSample(
         input_texture,
         input_sampler,
-        input.uv - texel * 3.5
+        input.uv + texel * 3.5
     ).rgb * 0.22;
 
     color += textureSample(
         input_texture,
         input_sampler,
-        input.uv - texel * 6.5
+        input.uv + texel * 6.5
     ).rgb * 0.12;
 
+    // Small opposite tap avoids a hard one-sided edge.
     color += textureSample(
         input_texture,
         input_sampler,
-        input.uv + texel * 1.0
+        input.uv - texel * 1.0
     ).rgb * 0.06;
 
     return vec4<f32>(color, 1.0);

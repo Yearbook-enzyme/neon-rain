@@ -12,13 +12,18 @@ pub const ATLAS_WIDTH: u32 = ATLAS_COLUMNS * GLYPH_WIDTH;
 
 pub const ATLAS_HEIGHT: u32 = ATLAS_ROWS * GLYPH_HEIGHT;
 
+// Temporary universally supported atlas.
+//
+// Fontconfig currently resolves the requested CJK family to plain
+// Noto Sans, which lacks the Katakana below. Keep every atlas slot
+// usable until a real CJK font is added through NixOS.
 const GLYPHS: [char; 64] = [
     // Digits
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', // Latin letters
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', // Uppercase Latin
     'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S',
-    'T', 'U', 'V', 'W', 'X', 'Y', 'Z', // Katakana
-    'ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク', 'ケ', 'コ', 'サ', 'シ', 'ス', 'セ', 'ソ', 'タ',
-    'チ', 'ツ', 'テ', 'ト', 'ナ', 'ニ', 'ヌ', 'ネ', 'ノ', 'ハ', // Symbols
+    'T', 'U', 'V', 'W', 'X', 'Y', 'Z', // Lowercase Latin
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
+    't', 'u', 'v', 'w', 'x', 'y', 'z', // Symbols
     '+', '-',
 ];
 
