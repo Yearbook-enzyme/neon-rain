@@ -77,6 +77,10 @@ fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     amount * amount * (3.0 - 2.0 * amount)
 }
 
+fn quantize(value: f32, step: f32) -> f32 {
+    (value / step).round() * step
+}
+
 fn visual_scale(size: winit::dpi::PhysicalSize<u32>) -> f32 {
     let pixel_area = size.width.max(1) as f32 * size.height.max(1) as f32;
 
@@ -102,6 +106,9 @@ struct State {
 
     simulation: Simulation,
     last_frame: Instant,
+
+    // Pause-aware clock for camera language and depth parallax.
+    motion_time: f32,
 
     paused: bool,
     speed_scale: f32,
@@ -376,6 +383,8 @@ impl State {
             simulation,
             last_frame: now,
 
+            motion_time: 0.0,
+
             paused: false,
             speed_scale: 1.0,
             glow_strength: 1.0,
@@ -497,9 +506,47 @@ impl State {
         let exposure = self.exposure.max(0.01);
         let glow_control = self.glow_strength.max(0.0);
 
+        // Two very slow frequencies prevent the camera movement from
+        // reading as a simple mechanical pendulum.
+        let camera_wave_x =
+            (self.motion_time * 0.105).sin() + (self.motion_time * 0.041 + 1.7).sin() * 0.42;
+
+        let camera_wave_y =
+            (self.motion_time * 0.083 + 0.9).cos() + (self.motion_time * 0.029).sin() * 0.35;
+
         for (stream_index, stream) in self.simulation.streams.iter().enumerate() {
             let depth = stream.depth.clamp(0.0, 1.0);
             let depth_shape = depth.powf(1.45);
+
+            let depth_parallax = depth.powf(1.55);
+
+            // Distant planes shift only subtly. Foreground planes move
+            // several pixels, producing depth without disturbing the
+            // underlying simulation coordinates.
+            let parallax_quantum = mix(0.25, 0.50, depth_parallax);
+
+            let camera_offset_x = quantize(
+                camera_wave_x * mix(0.20, 4.50, depth_parallax),
+                parallax_quantum,
+            );
+
+            let camera_offset_y = quantize(
+                camera_wave_y * mix(0.10, 2.20, depth_parallax),
+                parallax_quantum,
+            );
+
+            // Nearby streams receive a small stable lateral displacement.
+            // This lets them naturally cross and overlap background rain
+            // while their own anatomy remains perfectly coherent.
+            let overlap_sample =
+                stable_unit((stream_index as u32).wrapping_mul(0xa24b_aed5) ^ 0x4f56_4552);
+
+            let foreground_presence = smoothstep(0.55, 1.0, depth);
+
+            let overlap_offset_x = quantize(
+                (overlap_sample * 2.0 - 1.0) * 3.0 * foreground_presence,
+                0.50,
+            );
 
             // Five stable optical planes:
             // 0 = distant background, 4 = foreground.
@@ -565,8 +612,9 @@ impl State {
                     break;
                 }
 
-                let center_x = stream.x;
-                let center_y = stream.head - segment as f32 * glyph_height;
+                let center_x = stream.x + camera_offset_x + overlap_offset_x;
+
+                let center_y = stream.head + camera_offset_y - segment as f32 * glyph_height;
 
                 let margin_x = glyph_width * 0.70;
                 let margin_y = glyph_height * 0.70;
@@ -739,6 +787,10 @@ impl State {
         } else {
             dt * self.speed_scale
         };
+
+        if !self.paused {
+            self.motion_time += dt.min(0.05);
+        }
 
         self.simulation.update(simulation_dt);
 
