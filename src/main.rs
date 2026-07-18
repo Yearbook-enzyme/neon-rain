@@ -71,6 +71,12 @@ fn mix(left: f32, right: f32, amount: f32) -> f32 {
     left + (right - left) * amount
 }
 
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let amount = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+
+    amount * amount * (3.0 - 2.0 * amount)
+}
+
 fn visual_scale(size: winit::dpi::PhysicalSize<u32>) -> f32 {
     let pixel_area = size.width.max(1) as f32 * size.height.max(1) as f32;
 
@@ -521,7 +527,34 @@ impl State {
                 stable_unit((stream_index as u32).wrapping_mul(0x85eb_ca6b) ^ 0x4845_4144);
             let white_head_present = head_sample < head_probability;
 
+            // Stable anatomy for the lifetime of this stream.
+            // Protected leading glyphs participate in the seed so a
+            // respawn can produce a different body without flickering.
+            let anatomy_seed = (stream_index as u32).wrapping_mul(0x9e37_79b9)
+                ^ stream.glyphs[0].wrapping_mul(0x85eb_ca6b)
+                ^ stream.glyphs[1].wrapping_mul(0xc2b2_ae35)
+                ^ stream.glyphs[2].wrapping_mul(0x27d4_eb2f);
+
+            let primary_gap_center = mix(0.30, 0.68, stable_unit(anatomy_seed ^ 0x4741_5031));
+
+            let primary_gap_half_width = mix(0.035, 0.075, stable_unit(anatomy_seed ^ 0x5749_4431));
+
+            let secondary_gap_center = mix(0.62, 0.88, stable_unit(anatomy_seed ^ 0x4741_5032));
+
+            let secondary_gap_half_width =
+                mix(0.025, 0.055, stable_unit(anatomy_seed ^ 0x5749_4432));
+
             let stream_length = (stream.length as usize).min(GLYPHS_PER_STREAM);
+
+            let has_primary_gap =
+                stream_length >= 10 && stable_unit(anatomy_seed ^ 0x5052_494d) > 0.18;
+
+            let gaps_are_separated = (secondary_gap_center - primary_gap_center).abs()
+                > primary_gap_half_width + secondary_gap_half_width + 0.08;
+
+            let has_secondary_gap = stream_length >= 24
+                && gaps_are_separated
+                && stable_unit(anatomy_seed ^ 0x5345_434f) > 0.55;
 
             for segment in 0..stream_length {
                 if self.glyph_instances.len() >= MAX_GLYPH_INSTANCES {
@@ -544,7 +577,51 @@ impl State {
 
                 let trail_position =
                     segment as f32 / (stream_length.saturating_sub(1).max(1) as f32);
-                let trail_fade = (1.0 - trail_position).powf(1.65);
+
+                // Preserve a solid leading cluster. Gaps appear only
+                // in the body and remain attached to the stream.
+                let protected_head = segment < 4;
+
+                let in_primary_gap = has_primary_gap
+                    && (trail_position - primary_gap_center).abs() < primary_gap_half_width;
+
+                let in_secondary_gap = has_secondary_gap
+                    && (trail_position - secondary_gap_center).abs() < secondary_gap_half_width;
+
+                if !protected_head && (in_primary_gap || in_secondary_gap) {
+                    continue;
+                }
+
+                // Four-glyph groups share a stable energy character,
+                // making the body read as clusters rather than noise.
+                let cluster_index = segment / 4;
+
+                let cluster_energy = mix(
+                    0.82,
+                    1.10,
+                    stable_unit(anatomy_seed ^ (cluster_index as u32).wrapping_mul(0x1656_67b1)),
+                );
+
+                let glyph_energy = mix(
+                    0.94,
+                    1.06,
+                    stable_unit(anatomy_seed ^ (segment as u32).wrapping_mul(0xd3a2_646c)),
+                );
+
+                let head_profile = (-(segment as f32) * 0.72).exp();
+
+                let tail_narrowing = smoothstep(0.58, 1.0, trail_position);
+
+                // Maintain a readable middle body before the final
+                // section becomes narrower and dimmer.
+                let trail_fade = (1.0 - trail_position).powf(1.38);
+
+                let anatomy_energy = cluster_energy * glyph_energy * mix(1.0, 0.72, tail_narrowing);
+
+                let instance_glyph_width =
+                    glyph_width * (1.0 + head_profile * 0.08) * mix(1.0, 0.82, tail_narrowing);
+
+                let instance_glyph_height = glyph_height * (1.0 + head_profile * 0.035);
 
                 let cascade_delta = trail_position - stream.cascade_position;
                 let cascade_core = (-cascade_delta * cascade_delta * 360.0).exp();
@@ -560,7 +637,18 @@ impl State {
                 let propagation_profile = 0.80 + head_injection * 0.42;
                 let base_energy = stream.brightness * trail_fade * propagation_profile;
 
-                let core_energy = base_energy * atmosphere * (1.0 + cascade_packet * 0.35);
+                // Every stream receives a recognizable green
+                // leading cluster. The rarer white head is added below.
+                let head_lift = match segment {
+                    0 => 0.52,
+                    1 => 0.24,
+                    2 => 0.10,
+                    _ => 0.0,
+                };
+
+                let core_energy =
+                    base_energy * atmosphere * anatomy_energy * (1.0 + cascade_packet * 0.35)
+                        + stream.brightness * atmosphere * head_lift;
 
                 let cascade_energy =
                     stream.brightness * cascade_depth * cascade_packet * (0.45 + trail_fade * 0.55);
@@ -579,13 +667,19 @@ impl State {
                     (0.27 * core_energy + 0.84 * white_energy) * exposure,
                 ];
 
-                let glow_energy = (base_energy * glow_atmosphere * 0.34
-                    + stream.brightness * glow_atmosphere * cascade_packet * 0.42)
+                let glow_energy = (base_energy * anatomy_energy * glow_atmosphere * 0.34
+                    + stream.brightness * glow_atmosphere * cascade_packet * 0.42
+                    + stream.brightness * glow_atmosphere * head_profile * 0.08)
                     * glow_control
                     * exposure;
 
                 self.glyph_instances.push(GlyphInstance {
-                    position_size: [center_x, center_y, glyph_width, glyph_height],
+                    position_size: [
+                        center_x,
+                        center_y,
+                        instance_glyph_width,
+                        instance_glyph_height,
+                    ],
                     color_glow: [core_color[0], core_color[1], core_color[2], glow_energy],
                     glyph_data: [stream.glyphs[segment], 0, 0, 0],
                 });
