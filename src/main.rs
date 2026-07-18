@@ -87,6 +87,34 @@ fn visual_scale(size: winit::dpi::PhysicalSize<u32>) -> f32 {
     (pixel_area / (1600.0 * 900.0)).sqrt().clamp(0.72, 2.40)
 }
 
+#[derive(Clone, Copy, Debug)]
+enum RainMode {
+    Quiet,
+    Classic,
+    Surge,
+    Dream,
+}
+
+impl RainMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Quiet => "Quiet",
+            Self::Classic => "Classic",
+            Self::Surge => "Surge",
+            Self::Dream => "Dream",
+        }
+    }
+
+    fn density_scale(self) -> f32 {
+        match self {
+            Self::Quiet => 0.68,
+            Self::Classic => 1.00,
+            Self::Surge => 1.10,
+            Self::Dream => 0.82,
+        }
+    }
+}
+
 struct State {
     instance: wgpu::Instance,
     window: Arc<Window>,
@@ -111,10 +139,14 @@ struct State {
     motion_time: f32,
 
     paused: bool,
+    mode: RainMode,
+
     speed_scale: f32,
     glow_strength: f32,
+
     exposure: f32,
     target_exposure: f32,
+    exposure_bias: f32,
 
     glyph_instances: Vec<GlyphInstance>,
     glyph_instance_count: u32,
@@ -386,10 +418,14 @@ impl State {
             motion_time: 0.0,
 
             paused: false,
+            mode: RainMode::Classic,
+
             speed_scale: 1.0,
             glow_strength: 1.0,
+
             exposure: 1.0,
             target_exposure: 1.0,
+            exposure_bias: 1.0,
 
             glyph_instances: Vec::with_capacity(MAX_GLYPH_INSTANCES),
             glyph_instance_count: 0,
@@ -449,41 +485,35 @@ impl State {
 
     fn print_controls(&self) {
         println!(
-            "paused={}  speed={:.2}  glow={:.2}  exposure={:.2}",
-            self.paused, self.speed_scale, self.glow_strength, self.exposure,
+            "mode={}  paused={}  speed={:.2}  glow={:.2}  exposure={:.2}",
+            self.mode.label(),
+            self.paused,
+            self.speed_scale,
+            self.glow_strength,
+            self.exposure,
         );
     }
 
     fn apply_preset(&mut self, preset: u8) {
-        match preset {
-            1 => {
-                self.speed_scale = 0.20;
-                self.glow_strength = 0.05;
-                self.exposure = 0.35;
-            }
+        let (mode, speed_scale, glow_strength, exposure_bias) = match preset {
+            1 => (RainMode::Quiet, 0.20, 0.42, 0.72),
 
-            2 => {
-                self.speed_scale = 1.0;
-                self.glow_strength = 1.0;
-                self.exposure = 1.0;
-            }
+            2 => (RainMode::Classic, 1.00, 1.00, 1.00),
 
-            3 => {
-                self.speed_scale = 2.75;
-                self.glow_strength = 5.0;
-                self.exposure = 2.25;
-            }
+            3 => (RainMode::Surge, 2.35, 2.10, 1.22),
 
-            4 => {
-                self.speed_scale = 0.03;
-                self.glow_strength = 4.0;
-                self.exposure = 1.35;
-            }
+            4 => (RainMode::Dream, 0.07, 1.70, 1.08),
 
             _ => return,
-        }
+        };
 
-        println!("Applied preset {preset}");
+        self.mode = mode;
+        self.speed_scale = speed_scale;
+        self.glow_strength = glow_strength;
+        self.exposure_bias = exposure_bias;
+
+        println!("Applied preset {preset}: {}", self.mode.label(),);
+
         self.print_controls();
     }
 
@@ -559,7 +589,8 @@ impl State {
             let density_sample =
                 stable_unit((stream_index as u32).wrapping_mul(0x9e37_79b9) ^ 0x4d41_5452);
 
-            let density_keep = mix(0.96, 0.28, depth_shape);
+            let density_keep =
+                (mix(0.96, 0.28, depth_shape) * self.mode.density_scale()).clamp(0.04, 1.0);
 
             if density_sample > density_keep {
                 continue;
@@ -762,8 +793,11 @@ impl State {
         let average_ms = self.stats_elapsed * 1000.0 / self.stats_frames.max(1) as f32;
 
         self.window.set_title(&format!(
-            "Neon Rain — {:.0} FPS — {:.1} ms — {} glyphs",
-            fps, average_ms, self.glyph_instance_count,
+            "Neon Rain — {} — {:.0} FPS — {:.1} ms — {} glyphs",
+            self.mode.label(),
+            fps,
+            average_ms,
+            self.glyph_instance_count,
         ));
 
         println!(
@@ -795,7 +829,9 @@ impl State {
         self.simulation.update(simulation_dt);
 
         let stream_fraction = self.simulation.streams.len() as f32 / simulation::MAX_STREAMS as f32;
-        self.target_exposure = 1.35 - stream_fraction * 0.45;
+        let automatic_exposure = 1.35 - stream_fraction * 0.45;
+
+        self.target_exposure = automatic_exposure * self.exposure_bias;
 
         let adapt_speed = 2.0;
         self.exposure += (self.target_exposure - self.exposure) * (1.0 - (-adapt_speed * dt).exp());
