@@ -42,6 +42,10 @@ struct VertexOutput {
     @location(2)
     @interpolate(flat)
     glyph_index: u32,
+
+    @location(3)
+    @interpolate(flat)
+    depth_band: u32,
 };
 
 fn atlas_uv(
@@ -108,8 +112,8 @@ fn sample_glyph(
 fn sample_glyph_glow(
     local_point: vec2<f32>,
     glyph_index: u32,
+    radius: f32,
 ) -> f32 {
-    let radius = 0.12;
 
     let center =
         sample_glyph(local_point, glyph_index);
@@ -204,6 +208,7 @@ fn vs_main(
     output.local_point = local_point;
     output.color_glow = input.color_glow;
     output.glyph_index = input.glyph_data.x;
+    output.depth_band = input.glyph_data.y;
 
     return output;
 }
@@ -212,30 +217,112 @@ fn vs_main(
 fn fs_main(
     input: VertexOutput,
 ) -> @location(0) vec4<f32> {
-    let glyph_core =
+    let depth01 =
+        clamp(
+            f32(input.depth_band) / 4.0,
+            0.0,
+            1.0,
+        );
+
+    let glyph_sample =
         sample_glyph(
             input.local_point,
             input.glyph_index,
+        );
+
+    // Distant glyphs carry a slightly broader local halo.
+    // Foreground glyphs remain tighter and more legible.
+    let glow_radius =
+        mix(
+            0.155,
+            0.095,
+            depth01,
         );
 
     let glyph_glow =
         sample_glyph_glow(
             input.local_point,
             input.glyph_index,
+            glow_radius,
         );
 
+    // Mix a little halo into the distant glyph core, creating
+    // atmospheric softness without blurring the entire frame.
+    let softened_core =
+        max(
+            glyph_sample * 0.82,
+            glyph_glow * 0.22,
+        );
+
+    let focus =
+        smoothstep(
+            0.10,
+            0.90,
+            depth01,
+        );
+
+    let glyph_core =
+        mix(
+            softened_core,
+            glyph_sample,
+            focus,
+        );
+
+    let core_weight =
+        mix(
+            0.72,
+            1.05,
+            depth01,
+        );
+
+    let glow_weight =
+        mix(
+            1.18,
+            0.90,
+            depth01,
+        );
+
+    // Far atmosphere is slightly cooler. The nearest plane returns
+    // to the stronger primary Matrix green.
     let glow_green =
-        vec3<f32>(0.0, 0.38, 0.075);
+        mix(
+            vec3<f32>(
+                0.0,
+                0.29,
+                0.11,
+            ),
+            vec3<f32>(
+                0.0,
+                0.38,
+                0.075,
+            ),
+            depth01,
+        );
 
     let color =
-        input.color_glow.rgb * glyph_core
+        input.color_glow.rgb
+            * glyph_core
+            * core_weight
         + glow_green
             * input.color_glow.a
-            * glyph_glow;
+            * glyph_glow
+            * glow_weight;
 
-    if (max(color.r, max(color.g, color.b)) < 0.00001) {
+    if (
+        max(
+            color.r,
+            max(
+                color.g,
+                color.b,
+            ),
+        ) < 0.00001
+    ) {
         discard;
     }
 
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(
+        color,
+        1.0,
+    );
 }
+

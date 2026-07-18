@@ -41,7 +41,7 @@ struct GlyphInstance {
     // core red, core green, core blue, local glow strength
     color_glow: [f32; 4],
 
-    // glyph atlas index, reserved, reserved, reserved
+    // glyph atlas index, depth band, reserved, reserved
     glyph_data: [u32; 4],
 }
 
@@ -501,6 +501,10 @@ impl State {
             let depth = stream.depth.clamp(0.0, 1.0);
             let depth_shape = depth.powf(1.45);
 
+            // Five stable optical planes:
+            // 0 = distant background, 4 = foreground.
+            let depth_band = (depth * 4.0).round() as u32;
+
             // These decisions are deliberately seeded only from the
             // persistent stream slot. The old shader included phase in
             // the random seed, which made streams and white heads toggle
@@ -681,7 +685,7 @@ impl State {
                         instance_glyph_height,
                     ],
                     color_glow: [core_color[0], core_color[1], core_color[2], glow_energy],
-                    glyph_data: [stream.glyphs[segment], 0, 0, 0],
+                    glyph_data: [stream.glyphs[segment], depth_band, 0, 0],
                 });
             }
         }
