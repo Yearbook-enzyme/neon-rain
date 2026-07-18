@@ -1,5 +1,10 @@
 pub const GLYPHS_PER_STREAM: usize = 64;
 
+// Five layers × 102 horizontal lanes. Keeping the simulation
+// beneath the GPU limit prevents larger windows from silently
+// losing the foreground layers.
+pub const MAX_STREAMS: usize = 510;
+
 #[derive(Clone, Copy, Debug)]
 pub enum Personality {
     Steady,
@@ -70,11 +75,28 @@ impl Simulation {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        let old_width = self.width.max(1.0);
+        let old_height = self.height.max(1.0);
+        let existing_streams = self.streams.len();
+
         self.width = width.max(1) as f32;
         self.height = height.max(1) as f32;
 
-        // Slightly denser than before.
-        self.columns = (self.width / 16.0).ceil().max(1.0) as usize;
+        let width_ratio = self.width / old_width;
+        let height_ratio = self.height / old_height;
+
+        // 1600 × 900 is the reference viewport. At matching aspect
+        // ratios this yields approximately 100 lanes at any normal
+        // window or fullscreen resolution.
+        let visual_scale = ((self.width / 1600.0) * (self.height / 900.0))
+            .sqrt()
+            .clamp(0.72, 2.40);
+
+        let max_columns = (MAX_STREAMS / self.layers.max(1)).max(1);
+
+        self.columns = (self.width / (16.0 * visual_scale)).ceil().max(1.0) as usize;
+
+        self.columns = self.columns.min(max_columns);
 
         // Five persistent depth layers.
         let desired_streams = self.columns.saturating_mul(self.layers);
@@ -97,6 +119,11 @@ impl Simulation {
             let column = index % columns;
             let layer = (index / columns).min(layers - 1);
 
+            if index < existing_streams {
+                stream.head *= height_ratio;
+                stream.lane_offset *= width_ratio;
+            }
+
             stream.depth = if layers > 1 {
                 layer as f32 / (layers - 1) as f32
             } else {
@@ -104,6 +131,10 @@ impl Simulation {
             };
 
             let lane_width = width / columns as f32;
+
+            stream.lane_offset = stream
+                .lane_offset
+                .clamp(-lane_width * 0.42, lane_width * 0.42);
 
             let depth_stagger = layer as f32 * lane_width * 0.37;
 
@@ -120,6 +151,10 @@ impl Simulation {
         // Copy these before borrowing individual streams mutably.
         let weather_time = self.weather_time;
         let weather_width = self.width;
+
+        let visual_scale = ((self.width / 1600.0) * (self.height / 900.0))
+            .sqrt()
+            .clamp(0.72, 2.40);
 
         for index in 0..self.streams.len() {
             let mut should_respawn = false;
@@ -158,7 +193,12 @@ impl Simulation {
                 // This produces moving rain fronts instead of independent noise.
                 let weather = sample_weather(stream.x, stream.depth, weather_time, weather_width);
 
-                stream.head += stream.speed * personality_speed * depth_speed * weather.speed * dt;
+                stream.head += stream.speed
+                    * personality_speed
+                    * depth_speed
+                    * weather.speed
+                    * visual_scale
+                    * dt;
 
                 let drift_wave = (stream.phase * (0.22 + stream.depth * 0.16)).sin();
 
@@ -167,7 +207,8 @@ impl Simulation {
                     _ => 0.0,
                 };
 
-                stream.x += (stream.drift * drift_wave + nervous_jitter + weather.wind) * dt;
+                stream.x +=
+                    (stream.drift * drift_wave + nervous_jitter + weather.wind) * visual_scale * dt;
 
                 stream.x = stream.x.rem_euclid(self.width);
 
@@ -209,7 +250,7 @@ impl Simulation {
                     should_start_cascade = true;
                 }
 
-                let glyph_height = 13.0 + stream.depth * 15.0;
+                let glyph_height = (13.0 + stream.depth * 15.0) * visual_scale;
 
                 let trail_height = stream.length as f32 * glyph_height;
 

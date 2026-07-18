@@ -315,47 +315,44 @@ fn fs_main(
             0.0007,
         );
 
+    // Pixel-stable raster baseline.
+    //
+    // Optical distortion and breathing are temporarily disabled
+    // because continuous subpixel warping makes thin glyph strokes
+    // scintillate even while the simulation itself is paused.
     let camera_uv =
-        camera_sample_uv(
-            input.uv,
-            uniforms.time,
-            uniforms.aspect,
-        );
+        input.uv;
 
     let pixel =
         camera_uv
         * uniforms.resolution;
 
-    // Slow handheld-style movement measured in pixels. Two frequencies
-    // prevent the motion from reading as a simple pendulum.
+    // Camera movement is disabled for the pixel-stable baseline.
+    // It can return later as a snapped or post-process-only effect.
     let camera_sway =
-        vec2<f32>(
-            sin(uniforms.time * 0.085)
-                + sin(
-                    uniforms.time * 0.163
-                    + 1.4
-                ) * 0.38,
-
-            cos(
-                uniforms.time * 0.067
-                + 0.7
-            )
-                + sin(
-                    uniforms.time * 0.121
-                ) * 0.31,
-        )
-        * vec2<f32>(
-            3.2,
-            2.4,
-        );
+        vec2<f32>(0.0);
 
     var core_energy = 0.0;
     var glow_energy = 0.0;
     var head_energy = 0.0;
     var cascade_energy = 0.0;
 
-    let glyph_width = 16.0;
-    let glyph_height = 24.0;
+    // Resolution-stable visual scale. A larger viewport gains
+    // proportionally larger glyphs instead of progressively wider gaps.
+    let visual_scale = clamp(
+        sqrt(
+            max(
+                uniforms.resolution.x
+                    * uniforms.resolution.y,
+                1.0,
+            )
+            / (1600.0 * 900.0)
+        ),
+        0.72,
+        2.40,
+    );
+
+    // Glyph dimensions are selected per stream from depth.
 
     for (
         var stream_index = 0u;
@@ -382,6 +379,123 @@ fn fs_main(
         let cascade_intensity =
             stream.extras.z;
 
+        // Depth-aware composition pass.
+        //
+        // The simulation maintains five numerical layers, while
+        // these curves organize them visually into distant,
+        // middle, and foreground planes.
+        let depth01 =
+            clamp(
+                depth,
+                0.0,
+                1.0,
+            );
+
+        let depth_shape =
+            pow(
+                depth01,
+                1.45,
+            );
+
+        // Keep distant layers populated while allowing foreground
+        // streams to become large without covering the frame.
+        let density_sample =
+            random(
+                f32(stream_index) * 91.731
+                + stream.parameters.w * 17.317
+                + depth01 * 43.911
+            );
+
+        let density_keep =
+            mix(
+                0.96,
+                0.28,
+                depth_shape,
+            );
+
+        if (density_sample > density_keep) {
+            continue;
+        }
+
+        // Distant glyphs are small and fine. Foreground glyphs
+        // become noticeably larger than the primary rain plane.
+        let glyph_width =
+            max(
+                1.0,
+                floor(
+                    mix(
+                        9.5,
+                        20.5,
+                        depth_shape,
+                    ) * visual_scale
+                    + 0.5
+                ),
+            );
+
+        let glyph_height =
+            max(
+                1.0,
+                floor(
+                    mix(
+                        15.0,
+                        30.0,
+                        depth_shape,
+                    ) * visual_scale
+                    + 0.5
+                ),
+            );
+
+        // Core light remains visible in every plane, but bloom,
+        // white heads, and energetic events belong increasingly
+        // to the foreground.
+        let atmosphere =
+            mix(
+                0.42,
+                1.08,
+                pow(depth01, 0.78),
+            );
+
+        let glow_atmosphere =
+            mix(
+                0.06,
+                1.18,
+                pow(depth01, 1.55),
+            );
+
+        let head_probability =
+            mix(
+                0.015,
+                0.42,
+                pow(depth01, 1.40),
+            );
+
+        let head_sample =
+            random(
+                f32(stream_index) * 53.117
+                + stream.parameters.w * 71.913
+            );
+
+        let white_head_presence =
+            select(
+                0.0,
+                1.0,
+                head_sample < head_probability,
+            );
+
+        let head_depth =
+            mix(
+                0.06,
+                0.78,
+                pow(depth01, 1.60),
+            );
+
+        let cascade_depth =
+            mix(
+                0.18,
+                1.08,
+                pow(depth01, 1.15),
+            );
+
         // Foreground streams respond more strongly to camera motion,
         // creating gentle parallax between the five depth layers.
         let camera_depth_scale =
@@ -394,15 +508,23 @@ fn fs_main(
                 ),
             );
 
-        let stream_x =
+        let unsnapped_stream_x =
             stream.position.x
             + camera_sway.x
                 * camera_depth_scale;
 
-        let stream_head =
+        let unsnapped_stream_head =
             stream.position.y
             + camera_sway.y
                 * camera_depth_scale;
+
+        let stream_x =
+            floor(unsnapped_stream_x)
+            + 0.5;
+
+        let stream_head =
+            floor(unsnapped_stream_head)
+            + 0.5;
 
         let brightness =
             stream.position.w;
@@ -529,59 +651,16 @@ fn fs_main(
                 0.12,
             );
 
-        // Real layer depth:
-        // 0.0 = distant, 1.0 = foreground.
-        let atmosphere =
-            mix(
-                0.58,
-                1.0,
-                pow(
-                    clamp(depth, 0.0, 1.0),
-                    0.75,
-                ),
-            );
+        // Per-plane atmospheric weights were selected above,
+        // before sampling the glyph atlas.
 
-        // A packet of energy travels backward through the trail.
-        // The asymmetric shaping keeps it from looking like a uniform
-        // brightness oscillation across the entire stream.
-        let pulse_phase =
-            uniforms.time
-                * (5.0 + stream.parameters.y * 0.32)
-            - trail_position * 15.0
-            + stream.parameters.w * 6.2831853;
-
-        let pulse_wave =
-            0.5 + 0.5 * sin(pulse_phase);
-
-        let electrical_pulse =
-            0.76
-            + 0.30
-                * pow(
-                    pulse_wave,
-                    3.0,
-                );
-
-        // Shimmer changes only several times per second. This gives
-        // individual glyphs slight electrical instability without
-        // creating frame-by-frame television noise.
-        let shimmer_frame =
-            floor(
-                uniforms.time
-                * (6.0 + stream.parameters.y * 0.35)
-            );
-
-        let shimmer_seed =
-            f32(stream_index) * 131.0
-            + f32(segment) * 17.0
-            + stream.parameters.w * 29.0
-            + shimmer_frame * 0.73;
-
-        let glyph_variation =
-            mix(
-                0.86,
-                1.10,
-                random(shimmer_seed),
-            );
+        // Stable baseline: temporal brightness animation is
+        // disabled while the depth hierarchy is being tuned.
+        //
+        // Motion, mutations, weather, and cascades remain active,
+        // but ordinary glyph luminance no longer flashes at 6 Hz.
+        let electrical_pulse = 1.0;
+        let glyph_variation = 1.0;
 
         // Energy originates near the head and diffuses into the trail.
         let head_injection =
@@ -593,12 +672,15 @@ fn fs_main(
             0.80
             + head_injection * 0.42;
 
-        let stream_energy =
+        let base_stream_energy =
             brightness
             * trail_fade
             * electrical_pulse
             * glyph_variation
-            * propagation_profile
+            * propagation_profile;
+
+        let stream_energy =
+            base_stream_energy
             * atmosphere;
 
         core_energy +=
@@ -612,17 +694,19 @@ fn fs_main(
         glow_energy +=
             glyph_glow
             * (
-                stream_energy * 0.42
+                base_stream_energy
+                    * glow_atmosphere
+                    * 0.34
                 + brightness
-                    * atmosphere
+                    * glow_atmosphere
                     * cascade_packet
-                    * 0.50
+                    * 0.42
             );
 
         cascade_energy +=
             glyph_core
             * brightness
-            * atmosphere
+            * cascade_depth
             * glyph_variation
             * cascade_packet
             * (
@@ -631,16 +715,16 @@ fn fs_main(
             );
 
         if (segment == 0u) {
-            let head_flash =
-                1.85
-                + electrical_pulse * 0.45;
+            let head_flash = 1.30;
 
             head_energy +=
                 glyph_core
                 * brightness
                 * atmosphere
                 * glyph_variation
-                * head_flash;
+                * head_flash
+                * white_head_presence
+                * head_depth;
         }
     }
 
