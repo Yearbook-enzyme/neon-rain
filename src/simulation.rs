@@ -218,11 +218,10 @@ impl Simulation {
 
                 let fade_out = (remaining / 1.0).clamp(0.0, 1.0);
 
-                let pulse = match stream.personality {
-                    Personality::Pulse => 0.66 + 0.34 * (stream.phase * 3.2).sin().abs(),
-                    Personality::Nervous => 0.78 + 0.22 * (stream.phase * 10.0).sin().abs(),
-                    _ => 1.0,
-                };
+                // Keep ordinary stream luminance stable. Expressive
+                // brightness returns through coherent weather and rare
+                // cascades instead of independent rapid pulsing.
+                let pulse = 1.0;
 
                 let personality_brightness = match stream.personality {
                     Personality::Ghost => 0.32,
@@ -276,6 +275,19 @@ impl Simulation {
         }
     }
 
+    fn next_mutation_delay(&mut self, personality: Personality, depth: f32) -> f32 {
+        let base = match personality {
+            Personality::Steady => self.rng.range(7.0, 14.0),
+            Personality::Fast => self.rng.range(4.5, 9.0),
+            Personality::Lazy => self.rng.range(12.0, 24.0),
+            Personality::Nervous => self.rng.range(3.0, 6.0),
+            Personality::Pulse => self.rng.range(6.0, 12.0),
+            Personality::Ghost => self.rng.range(14.0, 28.0),
+        };
+
+        base * (1.80 - depth.clamp(0.0, 1.0) * 0.80)
+    }
+
     fn next_cascade_delay(&mut self, personality: Personality) -> f32 {
         match personality {
             Personality::Steady => self.rng.range(50.0, 100.0),
@@ -325,32 +337,21 @@ impl Simulation {
     }
 
     fn mutate_stream(&mut self, index: usize) {
-        let mutation_count = match self.streams[index].personality {
-            Personality::Nervous => {
-                if self.rng.chance(0.30) {
-                    3
-                } else {
-                    2
-                }
-            }
-            Personality::Fast => 2,
-            _ => 1,
-        };
+        let personality = self.streams[index].personality;
+        let depth = self.streams[index].depth;
+        let visible_length = (self.streams[index].length as usize).min(GLYPHS_PER_STREAM);
 
-        for _ in 0..mutation_count {
-            let glyph_index = self.rng.usize(GLYPHS_PER_STREAM);
+        const PROTECTED_HEAD_GLYPHS: usize = 5;
+
+        if visible_length > PROTECTED_HEAD_GLYPHS {
+            let mutable_count = visible_length - PROTECTED_HEAD_GLYPHS;
+            let glyph_index = PROTECTED_HEAD_GLYPHS + self.rng.usize(mutable_count);
 
             self.streams[index].glyphs[glyph_index] = self.rng.u32(64);
         }
 
-        self.streams[index].mutation_timer = match self.streams[index].personality {
-            Personality::Steady => self.rng.range(0.18, 0.65),
-            Personality::Fast => self.rng.range(0.08, 0.28),
-            Personality::Lazy => self.rng.range(0.55, 1.45),
-            Personality::Nervous => self.rng.range(0.035, 0.14),
-            Personality::Pulse => self.rng.range(0.20, 0.70),
-            Personality::Ghost => self.rng.range(0.65, 1.80),
-        };
+        let next_delay = self.next_mutation_delay(personality, depth);
+        self.streams[index].mutation_timer = next_delay;
     }
 
     fn create_stream(&mut self, index: usize, initial: bool) -> Stream {
@@ -425,7 +426,10 @@ impl Simulation {
             brightness: 0.0,
             glyphs,
             personality,
-            mutation_timer: self.rng.range(0.02, 0.8),
+            mutation_timer: {
+                let initial_scale = self.rng.range(0.35, 1.0);
+                self.next_mutation_delay(personality, depth) * initial_scale
+            },
             age: if initial {
                 self.rng.range(0.0, 4.0)
             } else {

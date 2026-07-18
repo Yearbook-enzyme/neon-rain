@@ -2,7 +2,7 @@ mod atlas;
 mod bloom;
 mod simulation;
 
-use std::{sync::Arc, time::Instant};
+use std::{mem::size_of, sync::Arc, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -30,49 +30,51 @@ struct Uniforms {
     padding: [u32; 3],
 }
 
-const MAX_GPU_STREAMS: usize = simulation::MAX_STREAMS;
+const MAX_GLYPH_INSTANCES: usize = simulation::MAX_STREAMS * GLYPHS_PER_STREAM;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuStream {
-    // x, head, speed, brightness
-    position: [f32; 4],
+struct GlyphInstance {
+    // center x, center y, glyph width, glyph height
+    position_size: [f32; 4],
 
-    // length, personality, age, phase
-    parameters: [f32; 4],
+    // core red, core green, core blue, local glow strength
+    color_glow: [f32; 4],
 
-    // depth, cascade position, cascade intensity, reserved
-    extras: [f32; 4],
-
-    glyphs: [u32; GLYPHS_PER_STREAM],
+    // glyph atlas index, reserved, reserved, reserved
+    glyph_data: [u32; 4],
 }
 
-impl GpuStream {
-    fn from_stream(stream: &simulation::Stream) -> Self {
-        let personality = match stream.personality {
-            simulation::Personality::Steady => 0.0,
-            simulation::Personality::Fast => 1.0,
-            simulation::Personality::Lazy => 2.0,
-            simulation::Personality::Nervous => 3.0,
-            simulation::Personality::Pulse => 4.0,
-            simulation::Personality::Ghost => 5.0,
-        };
+impl GlyphInstance {
+    const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+        array_stride: size_of::<Self>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &wgpu::vertex_attr_array![
+            0 => Float32x4,
+            1 => Float32x4,
+            2 => Uint32x4,
+        ],
+    };
+}
 
-        Self {
-            position: [stream.x, stream.head, stream.speed, stream.brightness],
+fn stable_unit(mut value: u32) -> f32 {
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7feb_352d);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846c_a68b);
+    value ^= value >> 16;
 
-            parameters: [stream.length as f32, personality, stream.age, stream.phase],
+    value as f32 / u32::MAX as f32
+}
 
-            extras: [
-                stream.depth,
-                stream.cascade_position,
-                stream.cascade_intensity,
-                0.0,
-            ],
+fn mix(left: f32, right: f32, amount: f32) -> f32 {
+    left + (right - left) * amount
+}
 
-            glyphs: stream.glyphs,
-        }
-    }
+fn visual_scale(size: winit::dpi::PhysicalSize<u32>) -> f32 {
+    let pixel_area = size.width.max(1) as f32 * size.height.max(1) as f32;
+
+    (pixel_area / (1600.0 * 900.0)).sqrt().clamp(0.72, 2.40)
 }
 
 struct State {
@@ -88,7 +90,7 @@ struct State {
 
     render_pipeline: wgpu::RenderPipeline,
     uniform_buffer: wgpu::Buffer,
-    stream_buffer: wgpu::Buffer,
+    glyph_instance_buffer: wgpu::Buffer,
     render_bind_group: wgpu::BindGroup,
     bloom: Bloom,
 
@@ -100,6 +102,13 @@ struct State {
     glow_strength: f32,
     exposure: f32,
     target_exposure: f32,
+
+    glyph_instances: Vec<GlyphInstance>,
+    glyph_instance_count: u32,
+
+    stats_elapsed: f32,
+    stats_frames: u32,
+    stats_worst_ms: f32,
 
     // These fields keep the GPU resources alive.
     _glyph_texture: wgpu::Texture,
@@ -166,12 +175,12 @@ impl State {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let empty_streams = vec![GpuStream::zeroed(); MAX_GPU_STREAMS];
+        let empty_instances = vec![GlyphInstance::zeroed(); MAX_GLYPH_INSTANCES];
 
-        let stream_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Persistent stream storage buffer"),
-            contents: bytemuck::cast_slice(&empty_streams),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        let glyph_instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Glyph instance buffer"),
+            contents: bytemuck::cast_slice(&empty_instances),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let atlas_data = create_glyph_atlas();
@@ -205,8 +214,8 @@ impl State {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
 
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
 
             ..Default::default()
@@ -219,7 +228,7 @@ impl State {
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::VERTEX,
 
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -251,18 +260,6 @@ impl State {
 
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-
-                        count: None,
-                    },
                 ],
             });
 
@@ -282,10 +279,6 @@ impl State {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&glyph_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: stream_buffer.as_entire_binding(),
                 },
             ],
         });
@@ -313,7 +306,7 @@ impl State {
 
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
 
-                buffers: &[],
+                buffers: &[Some(GlyphInstance::LAYOUT)],
             },
 
             primitive: wgpu::PrimitiveState::default(),
@@ -331,7 +324,18 @@ impl State {
                 targets: &[Some(wgpu::ColorTargetState {
                     format: HDR_FORMAT,
 
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
 
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -359,7 +363,7 @@ impl State {
 
             render_pipeline,
             uniform_buffer,
-            stream_buffer,
+            glyph_instance_buffer,
             render_bind_group,
             bloom,
 
@@ -371,6 +375,13 @@ impl State {
             glow_strength: 1.0,
             exposure: 1.0,
             target_exposure: 1.0,
+
+            glyph_instances: Vec::with_capacity(MAX_GLYPH_INSTANCES),
+            glyph_instance_count: 0,
+
+            stats_elapsed: 0.0,
+            stats_frames: 0,
+            stats_worst_ms: 0.0,
 
             _glyph_texture: glyph_texture,
             _glyph_texture_view: glyph_texture_view,
@@ -471,6 +482,154 @@ impl State {
         self.window.set_fullscreen(fullscreen);
     }
 
+    fn rebuild_glyph_instances(&mut self) {
+        self.glyph_instances.clear();
+
+        let scale = visual_scale(self.size);
+        let width = self.size.width.max(1) as f32;
+        let height = self.size.height.max(1) as f32;
+        let exposure = self.exposure.max(0.01);
+        let glow_control = self.glow_strength.max(0.0);
+
+        for (stream_index, stream) in self.simulation.streams.iter().enumerate() {
+            let depth = stream.depth.clamp(0.0, 1.0);
+            let depth_shape = depth.powf(1.45);
+
+            // These decisions are deliberately seeded only from the
+            // persistent stream slot. The old shader included phase in
+            // the random seed, which made streams and white heads toggle
+            // unpredictably every frame.
+            let density_sample =
+                stable_unit((stream_index as u32).wrapping_mul(0x9e37_79b9) ^ 0x4d41_5452);
+
+            let density_keep = mix(0.96, 0.28, depth_shape);
+
+            if density_sample > density_keep {
+                continue;
+            }
+
+            let glyph_width = mix(9.5, 20.5, depth_shape) * scale;
+            let glyph_height = mix(15.0, 30.0, depth_shape) * scale;
+
+            let atmosphere = mix(0.42, 1.08, depth.powf(0.78));
+            let glow_atmosphere = mix(0.06, 1.18, depth.powf(1.55));
+            let head_probability = mix(0.015, 0.42, depth.powf(1.40));
+            let head_depth = mix(0.06, 0.78, depth.powf(1.60));
+            let cascade_depth = mix(0.18, 1.08, depth.powf(1.15));
+
+            let head_sample =
+                stable_unit((stream_index as u32).wrapping_mul(0x85eb_ca6b) ^ 0x4845_4144);
+            let white_head_present = head_sample < head_probability;
+
+            let stream_length = (stream.length as usize).min(GLYPHS_PER_STREAM);
+
+            for segment in 0..stream_length {
+                if self.glyph_instances.len() >= MAX_GLYPH_INSTANCES {
+                    break;
+                }
+
+                let center_x = stream.x;
+                let center_y = stream.head - segment as f32 * glyph_height;
+
+                let margin_x = glyph_width * 0.70;
+                let margin_y = glyph_height * 0.70;
+
+                if center_x + margin_x < 0.0
+                    || center_x - margin_x > width
+                    || center_y + margin_y < 0.0
+                    || center_y - margin_y > height
+                {
+                    continue;
+                }
+
+                let trail_position =
+                    segment as f32 / (stream_length.saturating_sub(1).max(1) as f32);
+                let trail_fade = (1.0 - trail_position).powf(1.65);
+
+                let cascade_delta = trail_position - stream.cascade_position;
+                let cascade_core = (-cascade_delta * cascade_delta * 360.0).exp();
+                let cascade_wake = if cascade_delta < 0.0 {
+                    (cascade_delta * 14.0).exp()
+                } else {
+                    0.0
+                };
+                let cascade_packet =
+                    stream.cascade_intensity * (cascade_core * 1.20 + cascade_wake * 0.16);
+
+                let head_injection = (-(segment as f32) * 0.38).exp();
+                let propagation_profile = 0.80 + head_injection * 0.42;
+                let base_energy = stream.brightness * trail_fade * propagation_profile;
+
+                let core_energy = base_energy * atmosphere * (1.0 + cascade_packet * 0.35);
+
+                let cascade_energy =
+                    stream.brightness * cascade_depth * cascade_packet * (0.45 + trail_fade * 0.55);
+
+                let head_energy = if segment == 0 && white_head_present {
+                    stream.brightness * atmosphere * 1.30 * head_depth
+                } else {
+                    0.0
+                };
+
+                let white_energy = head_energy + cascade_energy * 0.82;
+
+                let core_color = [
+                    (0.03 * core_energy + 0.78 * white_energy) * exposure,
+                    (1.00 * core_energy + 1.00 * white_energy) * exposure,
+                    (0.27 * core_energy + 0.84 * white_energy) * exposure,
+                ];
+
+                let glow_energy = (base_energy * glow_atmosphere * 0.34
+                    + stream.brightness * glow_atmosphere * cascade_packet * 0.42)
+                    * glow_control
+                    * exposure;
+
+                self.glyph_instances.push(GlyphInstance {
+                    position_size: [center_x, center_y, glyph_width, glyph_height],
+                    color_glow: [core_color[0], core_color[1], core_color[2], glow_energy],
+                    glyph_data: [stream.glyphs[segment], 0, 0, 0],
+                });
+            }
+        }
+
+        self.glyph_instance_count = self.glyph_instances.len() as u32;
+
+        if !self.glyph_instances.is_empty() {
+            self.queue.write_buffer(
+                &self.glyph_instance_buffer,
+                0,
+                bytemuck::cast_slice(&self.glyph_instances),
+            );
+        }
+    }
+
+    fn update_frame_stats(&mut self, dt: f32) {
+        self.stats_elapsed += dt;
+        self.stats_frames += 1;
+        self.stats_worst_ms = self.stats_worst_ms.max(dt * 1000.0);
+
+        if self.stats_elapsed < 1.0 {
+            return;
+        }
+
+        let fps = self.stats_frames as f32 / self.stats_elapsed;
+        let average_ms = self.stats_elapsed * 1000.0 / self.stats_frames.max(1) as f32;
+
+        self.window.set_title(&format!(
+            "Neon Rain — {:.0} FPS — {:.1} ms — {} glyphs",
+            fps, average_ms, self.glyph_instance_count,
+        ));
+
+        println!(
+            "fps={fps:.1}  frame={average_ms:.2}ms  worst={:.2}ms  glyphs={}",
+            self.stats_worst_ms, self.glyph_instance_count,
+        );
+
+        self.stats_elapsed = 0.0;
+        self.stats_frames = 0;
+        self.stats_worst_ms = 0.0;
+    }
+
     fn update(&mut self) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32();
@@ -485,38 +644,27 @@ impl State {
 
         self.simulation.update(simulation_dt);
 
-        let stream_count = self.simulation.streams.len().min(MAX_GPU_STREAMS);
-
-        let stream_fraction = stream_count as f32 / MAX_GPU_STREAMS as f32;
+        let stream_fraction = self.simulation.streams.len() as f32 / simulation::MAX_STREAMS as f32;
         self.target_exposure = 1.35 - stream_fraction * 0.45;
 
         let adapt_speed = 2.0;
         self.exposure += (self.target_exposure - self.exposure) * (1.0 - (-adapt_speed * dt).exp());
 
-        let gpu_streams: Vec<GpuStream> = self
-            .simulation
-            .streams
-            .iter()
-            .take(stream_count)
-            .map(GpuStream::from_stream)
-            .collect();
-
-        if !gpu_streams.is_empty() {
-            self.queue
-                .write_buffer(&self.stream_buffer, 0, bytemuck::cast_slice(&gpu_streams));
-        }
+        self.rebuild_glyph_instances();
 
         let uniforms = Uniforms {
             time: self.start_time.elapsed().as_secs_f32(),
             aspect: calculate_aspect(self.size),
             resolution: [self.size.width as f32, self.size.height as f32],
             controls: [self.speed_scale, self.glow_strength, self.exposure, 0.0],
-            stream_count: stream_count as u32,
+            stream_count: self.glyph_instance_count,
             padding: [0; 3],
         };
 
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+
+        self.update_frame_stats(dt);
     }
 
     fn render(&mut self) {
@@ -583,7 +731,12 @@ impl State {
                     resolve_target: None,
 
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.00025,
+                            g: 0.0022,
+                            b: 0.0007,
+                            a: 1.0,
+                        }),
 
                         store: wgpu::StoreOp::Store,
                     },
@@ -598,8 +751,9 @@ impl State {
             render_pass.set_pipeline(&self.render_pipeline);
 
             render_pass.set_bind_group(0, &self.render_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.glyph_instance_buffer.slice(..));
 
-            render_pass.draw(0..3, 0..1);
+            render_pass.draw(0..6, 0..self.glyph_instance_count);
         }
 
         self.bloom.composite(&mut encoder, &view);

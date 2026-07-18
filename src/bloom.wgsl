@@ -15,7 +15,11 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
     var output: VertexOutput;
     output.position = vec4<f32>(position, 0.0, 1.0);
-    output.uv = position * 0.5 + vec2<f32>(0.5);
+    output.uv =
+        vec2<f32>(
+            position.x * 0.5 + 0.5,
+            0.5 - position.y * 0.5,
+        );
     return output;
 }
 
@@ -91,27 +95,17 @@ var history_sampler: sampler;
 
 @fragment
 fn fs_history(input: VertexOutput) -> @location(0) vec4<f32> {
-    let dimensions = vec2<f32>(textureDimensions(previous_history_texture));
-    let texel = vec2<f32>(1.0 / dimensions.x, 1.0 / dimensions.y);
-
     let current = textureSample(
         current_wide_texture,
         history_sampler,
         input.uv
     ).rgb;
 
-    // Bloom is vertically flipped during final composition.
-    // Sampling previous history at a slightly larger texture Y
-    // therefore moves retained light downward on the screen.
-    let history_uv = clamp(
-        input.uv
-            + vec2<f32>(
-                0.0,
-                texel.y * 0.55
-            ),
-        vec2<f32>(0.0),
-        vec2<f32>(1.0)
-    );
+    // All bloom targets now share the same orientation.
+    // Keep temporal persistence stationary until directional
+    // trailing is deliberately restored.
+    let history_uv =
+        input.uv;
 
     let previous = textureSample(
         previous_history_texture,
@@ -174,20 +168,18 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
         input.uv
     ).rgb;
 
-    // The bloom render targets use the opposite texture Y orientation from the
-    // original HDR target, so both bloom layers are corrected here.
-    let bloom_uv = vec2<f32>(input.uv.x, 1.0 - input.uv.y);
-
+    // Original, near bloom, and wide bloom now share one
+    // consistent top-left texture orientation.
     let near_bloom = textureSample(
         near_bloom_texture,
         composite_sampler,
-        bloom_uv
+        input.uv
     ).rgb;
 
     let wide_bloom = textureSample(
         wide_bloom_texture,
         composite_sampler,
-        bloom_uv
+        input.uv
     ).rgb;
 
     // Near bloom hugs glyphs; temporal wide bloom leaves a descending light trail.
@@ -203,42 +195,66 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {
-    let dimensions = vec2<f32>(textureDimensions(input_texture));
-    let texel = vec2<f32>(0.0, 1.0 / dimensions.y);
+    let dimensions =
+        vec2<f32>(textureDimensions(input_texture));
 
-    // Positive texture Y becomes downward screen motion after
-    // bloom is vertically corrected during final composition.
-    var color = textureSample(
-        input_texture,
-        input_sampler,
-        input.uv
-    ).rgb * 0.32;
+    let texel =
+        vec2<f32>(
+            0.0,
+            1.0 / dimensions.y,
+        );
 
-    color += textureSample(
-        input_texture,
-        input_sampler,
-        input.uv + texel * 1.5
-    ).rgb * 0.28;
+    var color =
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv,
+        ).rgb * 0.36;
 
-    color += textureSample(
-        input_texture,
-        input_sampler,
-        input.uv + texel * 3.5
-    ).rgb * 0.22;
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv + texel * 1.5,
+        ).rgb * 0.22;
 
-    color += textureSample(
-        input_texture,
-        input_sampler,
-        input.uv + texel * 6.5
-    ).rgb * 0.12;
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv - texel * 1.5,
+        ).rgb * 0.22;
 
-    // Small opposite tap avoids a hard one-sided edge.
-    color += textureSample(
-        input_texture,
-        input_sampler,
-        input.uv - texel * 1.0
-    ).rgb * 0.06;
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv + texel * 3.5,
+        ).rgb * 0.08;
 
-    return vec4<f32>(color, 1.0);
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv - texel * 3.5,
+        ).rgb * 0.08;
+
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv + texel * 6.5,
+        ).rgb * 0.02;
+
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv - texel * 6.5,
+        ).rgb * 0.02;
+
+    return vec4<f32>(
+        color,
+        1.0,
+    );
 }
-
