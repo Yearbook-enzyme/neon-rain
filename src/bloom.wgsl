@@ -95,43 +95,91 @@ var history_sampler: sampler;
 
 @fragment
 fn fs_history(input: VertexOutput) -> @location(0) vec4<f32> {
-    let current = textureSample(
-        current_wide_texture,
-        history_sampler,
-        input.uv
-    ).rgb;
+    let dimensions =
+        vec2<f32>(
+            textureDimensions(
+                previous_history_texture,
+            ),
+        );
 
-    // All bloom targets now share the same orientation.
-    // Keep temporal persistence stationary until directional
-    // trailing is deliberately restored.
+    let texel =
+        1.0 / max(
+            dimensions,
+            vec2<f32>(1.0),
+        );
+
+    let current =
+        textureSample(
+            current_wide_texture,
+            history_sampler,
+            input.uv,
+        ).rgb;
+
+    // Directional bloom in unified top-left coordinates.
+    //
+    // Pull retained light from slightly above the destination
+    // pixel so temporal glow progresses downward with the rain.
     let history_uv =
-        input.uv;
+        clamp(
+            input.uv
+                - vec2<f32>(
+                    0.0,
+                    texel.y * 0.65,
+                ),
+            vec2<f32>(0.0),
+            vec2<f32>(1.0),
+        );
 
-    let previous = textureSample(
-        previous_history_texture,
-        history_sampler,
-        history_uv
-    ).rgb;
+    let previous =
+        textureSample(
+            previous_history_texture,
+            history_sampler,
+            history_uv,
+        ).rgb;
 
-    // Normalized accumulation prevents old bloom from building
-    // into persistent pale blobs.
+    let previous_brightness =
+        max(
+            previous.r,
+            max(
+                previous.g,
+                previous.b,
+            ),
+        );
+
+    // Strong coherent trails persist longer than faint background
+    // residue, preventing a permanent pale atmospheric pattern.
+    let retention =
+        mix(
+            0.78,
+            0.87,
+            smoothstep(
+                0.08,
+                0.85,
+                previous_brightness,
+            ),
+        );
+
     let retained =
-        previous * 0.88;
+        previous * retention;
 
     let deposited =
-        current * 0.12;
+        current * 0.15;
 
     let history =
         max(
-            current * 0.55,
-            retained + deposited
+            current * 0.52,
+            retained + deposited,
         );
 
     return vec4<f32>(
-        history,
-        1.0
+        min(
+            history,
+            vec3<f32>(2.4),
+        ),
+        1.0,
     );
 }
+
 
 @group(0) @binding(0)
 var original_texture: texture_2d<f32>;
@@ -183,8 +231,8 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
     ).rgb;
 
     // Near bloom hugs glyphs; temporal wide bloom leaves a descending light trail.
-    let near_strength = 0.95;
-    let wide_strength = 0.42;
+    let near_strength = 0.90;
+    let wide_strength = 0.30;
 
     let hdr_color = original
         + near_bloom * near_strength
@@ -196,12 +244,19 @@ fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
 @fragment
 fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {
     let dimensions =
-        vec2<f32>(textureDimensions(input_texture));
+        vec2<f32>(
+            textureDimensions(
+                input_texture,
+            ),
+        );
 
     let texel =
         vec2<f32>(
             0.0,
-            1.0 / dimensions.y,
+            1.0 / max(
+                dimensions.y,
+                1.0,
+            ),
         );
 
     var color =
@@ -209,8 +264,10 @@ fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {
             input_texture,
             input_sampler,
             input.uv,
-        ).rgb * 0.36;
+        ).rgb * 0.34;
 
+    // Pull more light from below, extending the glow upward behind
+    // glyphs that are traveling downward.
     color +=
         textureSample(
             input_texture,
@@ -222,29 +279,30 @@ fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {
         textureSample(
             input_texture,
             input_sampler,
-            input.uv - texel * 1.5,
-        ).rgb * 0.22;
-
-    color +=
-        textureSample(
-            input_texture,
-            input_sampler,
             input.uv + texel * 3.5,
-        ).rgb * 0.08;
-
-    color +=
-        textureSample(
-            input_texture,
-            input_sampler,
-            input.uv - texel * 3.5,
-        ).rgb * 0.08;
+        ).rgb * 0.15;
 
     color +=
         textureSample(
             input_texture,
             input_sampler,
             input.uv + texel * 6.5,
-        ).rgb * 0.02;
+        ).rgb * 0.07;
+
+    // Smaller opposite taps keep the result soft.
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv - texel * 1.5,
+        ).rgb * 0.14;
+
+    color +=
+        textureSample(
+            input_texture,
+            input_sampler,
+            input.uv - texel * 3.5,
+        ).rgb * 0.06;
 
     color +=
         textureSample(
@@ -258,3 +316,4 @@ fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {
         1.0,
     );
 }
+
