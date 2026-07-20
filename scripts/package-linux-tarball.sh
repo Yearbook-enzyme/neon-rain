@@ -120,7 +120,11 @@ chmod 0755 "$STAGE/install-user.sh"
 "$STAGE/neon-rain" --help >/dev/null
 
 tar -C "$DIST" -czf "$ARCHIVE" "$NAME"
-sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+
+(
+  cd "$DIST"
+  sha256sum "$(basename "$ARCHIVE")" > "$(basename "$ARCHIVE").sha256"
+)
 
 echo "Created:"
 echo "  $ARCHIVE"

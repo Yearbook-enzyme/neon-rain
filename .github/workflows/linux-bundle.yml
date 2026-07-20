@@ -58,7 +58,14 @@ jobs:
           "$launcher" --version
           "$launcher" --help >/dev/null
           ldd "$(dirname "$launcher")/bin/neon-rain"
-          sha256sum -c "$archive.sha256"
+          (
+            cd "$(dirname "$archive")"
+            checksum_file="$(basename "$archive").sha256"
+            expected_name="$(basename "$archive")"
+            recorded_name="$(awk '{ sub(/^[^ ]+[[:space:]]+[*]?/, ""); print; exit }' "$checksum_file")"
+            test "$recorded_name" = "$expected_name"
+            sha256sum -c "$checksum_file"
+          )
 
       - name: Upload generic Linux bundle
         uses: actions/upload-artifact@v4
