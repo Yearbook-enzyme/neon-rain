@@ -61,8 +61,9 @@ cargo run --release -- --media-dir "/path/to/images"
 
 | Target | Status |
 |---|---|
-| NixOS / Nix, `x86_64-linux` | Tested alpha |
-| Other Linux distributions | Packaging planned |
+| NixOS / Nix, `x86_64-linux` | Packaged and runtime-tested alpha |
+| Ubuntu, native Cargo build | Formatting, tests, Clippy, and release build in CI |
+| Other Linux distributions | Runtime testing and packaging planned |
 | Windows | Planned |
 | macOS | Planned |
 | Android / iOS | Exploratory |
@@ -74,6 +75,7 @@ The renderer uses `wgpu`, but platform support also depends on windowing, audio,
 The original detailed project README—including controls, feature notes, and implementation-era reference material—has been preserved as [docs/REFERENCE.md](docs/REFERENCE.md).
 
 - [Deployment notes](docs/DEPLOYMENT.md)
+- [Portability status](docs/PORTABILITY.md)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Security policy](SECURITY.md)
@@ -86,8 +88,10 @@ The current alpha has passed:
 - Rust unit tests
 - Clippy
 - Reproducible Nix package build
+- Native Ubuntu Cargo build outside Nix
 - GitHub Actions CI
 - A fullscreen packaged smoke test on an AMD Radeon RX 580 using Vulkan
+- A clean-profile runtime test using an empty temporary home directory
 
 Real screenshots and demo video are planned and may later replace or supplement the current branded banner.
 
