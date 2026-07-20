@@ -8,6 +8,7 @@ pub enum CliAction {
     Run,
     Help,
     Version,
+    ListScenes,
     ListThemes,
     ListPalettes,
     PrintConfig,
@@ -15,13 +16,83 @@ pub enum CliAction {
     ResetSession,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScenePreset {
+    pub slug: &'static str,
+    pub label: &'static str,
+    pub theme: &'static str,
+    pub palette: &'static str,
+    pub auto_flight: &'static str,
+    pub cinematic: bool,
+    pub field_of_view: u32,
+}
+
+pub const SCENE_PRESETS: [ScenePreset; 6] = [
+    ScenePreset {
+        slug: "classic-matrix",
+        label: "Classic Matrix",
+        theme: "classic",
+        palette: "theme",
+        auto_flight: "forward",
+        cinematic: true,
+        field_of_view: 60,
+    },
+    ScenePreset {
+        slug: "lucid-dream",
+        label: "Lucid Dream",
+        theme: "dream",
+        palette: "vaporwave",
+        auto_flight: "weave",
+        cinematic: true,
+        field_of_view: 66,
+    },
+    ScenePreset {
+        slug: "cyber-tunnel",
+        label: "Cyber Tunnel",
+        theme: "surge",
+        palette: "cyberpunk",
+        auto_flight: "tunnel",
+        cinematic: true,
+        field_of_view: 50,
+    },
+    ScenePreset {
+        slug: "aurora-drift",
+        label: "Aurora Drift",
+        theme: "ghost",
+        palette: "rainbow",
+        auto_flight: "orbit",
+        cinematic: true,
+        field_of_view: 70,
+    },
+    ScenePreset {
+        slug: "ember-terminal",
+        label: "Ember Terminal",
+        theme: "amber",
+        palette: "ember",
+        auto_flight: "forward",
+        cinematic: false,
+        field_of_view: 58,
+    },
+    ScenePreset {
+        slug: "redline",
+        label: "Redline",
+        theme: "red-alert",
+        palette: "ember",
+        auto_flight: "tunnel",
+        cinematic: true,
+        field_of_view: 46,
+    },
+];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Preferences {
+    pub scene: String,
     pub theme: String,
     pub palette: String,
     pub fullscreen: bool,
     pub window_width: u32,
     pub window_height: u32,
+    pub field_of_view: u32,
     pub auto_flight: String,
     pub cinematic: bool,
     pub media_enabled: bool,
@@ -32,11 +103,13 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            scene: "classic-matrix".to_owned(),
             theme: "classic".to_owned(),
             palette: "theme".to_owned(),
             fullscreen: true,
             window_width: 1280,
             window_height: 720,
+            field_of_view: 60,
             auto_flight: "forward".to_owned(),
             cinematic: true,
             media_enabled: true,
@@ -64,17 +137,67 @@ impl LaunchOptions {
     }
 }
 
+pub fn scene_presets() -> &'static [ScenePreset] {
+    &SCENE_PRESETS
+}
+
+pub fn scene_preset(name: &str) -> Option<&'static ScenePreset> {
+    let normalized = normalize_name(name);
+
+    SCENE_PRESETS.iter().find(|scene| {
+        scene.slug == normalized
+            || (scene.slug == "classic-matrix"
+                && matches!(normalized.as_str(), "classic" | "matrix"))
+            || (scene.slug == "lucid-dream" && matches!(normalized.as_str(), "lucid" | "dream"))
+            || (scene.slug == "cyber-tunnel" && matches!(normalized.as_str(), "cyber" | "tunnel"))
+            || (scene.slug == "aurora-drift" && matches!(normalized.as_str(), "aurora" | "drift"))
+            || (scene.slug == "ember-terminal"
+                && matches!(normalized.as_str(), "ember" | "terminal"))
+    })
+}
+
+pub fn next_scene_preset(current: &str) -> &'static ScenePreset {
+    let index = scene_preset(current)
+        .and_then(|selected| {
+            SCENE_PRESETS
+                .iter()
+                .position(|candidate| candidate.slug == selected.slug)
+        })
+        .unwrap_or(0);
+
+    &SCENE_PRESETS[(index + 1) % SCENE_PRESETS.len()]
+}
+
+pub fn apply_scene(preferences: &mut Preferences, name: &str) -> Result<(), String> {
+    if normalize_name(name) == "custom" {
+        preferences.scene = "custom".to_owned();
+        return Ok(());
+    }
+
+    let Some(scene) = scene_preset(name) else {
+        return Err(format!("Unknown scene: {name}"));
+    };
+
+    preferences.scene = scene.slug.to_owned();
+    preferences.theme = scene.theme.to_owned();
+    preferences.palette = scene.palette.to_owned();
+    preferences.auto_flight = scene.auto_flight.to_owned();
+    preferences.cinematic = scene.cinematic;
+    preferences.field_of_view = scene.field_of_view;
+    Ok(())
+}
+
 pub fn parse_launch_options() -> Result<LaunchOptions, String> {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
     let config_path = explicit_config_path(&arguments).unwrap_or_else(default_config_path);
     let state_path = default_state_path();
 
-    let mut preferences = load_preferences(&config_path, Preferences::default())
+    let mut preferences = load_config(&config_path, Preferences::default())
         .map_err(|error| format!("Could not read {}: {error}", config_path.display()))?;
 
     let no_remember_requested = arguments.iter().any(|argument| argument == "--no-remember");
     if preferences.remember && !no_remember_requested {
-        preferences = load_preferences(&state_path, preferences)
+        preferences = load_config(&state_path, preferences)
             .map_err(|error| format!("Could not read {}: {error}", state_path.display()))?;
     }
 
@@ -89,6 +212,7 @@ pub fn parse_launch_options() -> Result<LaunchOptions, String> {
         match argument {
             "-h" | "--help" => action = CliAction::Help,
             "-V" | "--version" => action = CliAction::Version,
+            "--list-scenes" => action = CliAction::ListScenes,
             "--list-themes" => action = CliAction::ListThemes,
             "--list-palettes" => action = CliAction::ListPalettes,
             "--print-config" => action = CliAction::PrintConfig,
@@ -97,8 +221,14 @@ pub fn parse_launch_options() -> Result<LaunchOptions, String> {
             "--warm-cache" => warm_cache = true,
             "--fullscreen" => preferences.fullscreen = true,
             "--windowed" => preferences.fullscreen = false,
-            "--cinematic" => preferences.cinematic = true,
-            "--no-cinematic" => preferences.cinematic = false,
+            "--cinematic" => {
+                preferences.cinematic = true;
+                preferences.scene = "custom".to_owned();
+            }
+            "--no-cinematic" => {
+                preferences.cinematic = false;
+                preferences.scene = "custom".to_owned();
+            }
             "--media" => preferences.media_enabled = true,
             "--no-media" => {
                 preferences.media_enabled = false;
@@ -106,18 +236,35 @@ pub fn parse_launch_options() -> Result<LaunchOptions, String> {
             }
             "--remember" => preferences.remember = true,
             "--no-remember" => preferences.remember = false,
+            "--scene" => {
+                index += 1;
+                apply_scene(
+                    &mut preferences,
+                    required_value(&arguments, index, "--scene")?,
+                )?;
+            }
             "--theme" => {
                 index += 1;
                 preferences.theme = required_value(&arguments, index, "--theme")?.to_owned();
+                preferences.scene = "custom".to_owned();
             }
             "--palette" => {
                 index += 1;
                 preferences.palette = required_value(&arguments, index, "--palette")?.to_owned();
+                preferences.scene = "custom".to_owned();
             }
             "--auto-flight" => {
                 index += 1;
                 preferences.auto_flight =
                     required_value(&arguments, index, "--auto-flight")?.to_owned();
+                preferences.scene = "custom".to_owned();
+            }
+            "--fov" => {
+                index += 1;
+                preferences.field_of_view = required_value(&arguments, index, "--fov")?
+                    .parse::<u32>()
+                    .map_err(|_| "--fov requires an integer from 32 through 88".to_owned())?;
+                preferences.scene = "custom".to_owned();
             }
             "--size" => {
                 index += 1;
@@ -161,8 +308,7 @@ pub fn parse_launch_options() -> Result<LaunchOptions, String> {
         preferences.media_path = Some(path);
     }
 
-    preferences.window_width = preferences.window_width.clamp(320, 16384);
-    preferences.window_height = preferences.window_height.clamp(240, 16384);
+    clamp_preferences(&mut preferences);
 
     Ok(LaunchOptions {
         action,
@@ -182,21 +328,25 @@ pub fn render_preferences(preferences: &Preferences) -> String {
 
     format!(
         "# Neon Rain effective settings\n\
+         scene = {}\n\
          theme = {}\n\
          palette = {}\n\
          fullscreen = {}\n\
          window_width = {}\n\
          window_height = {}\n\
+         field_of_view = {}\n\
          auto_flight = {}\n\
          cinematic = {}\n\
          media_enabled = {}\n\
          media_path = {}\n\
          remember = {}\n",
+        preferences.scene,
         preferences.theme,
         preferences.palette,
         preferences.fullscreen,
         preferences.window_width,
         preferences.window_height,
+        preferences.field_of_view,
         preferences.auto_flight,
         preferences.cinematic,
         preferences.media_enabled,
@@ -239,18 +389,36 @@ pub fn reset_session(path: &Path) -> io::Result<bool> {
     Ok(true)
 }
 
+pub fn load_config(path: &Path, mut preferences: Preferences) -> io::Result<Preferences> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(preferences),
+        Err(error) => return Err(error),
+    };
+
+    apply_config_text(&text, &mut preferences);
+    clamp_preferences(&mut preferences);
+    Ok(preferences)
+}
+
 pub fn default_config_text() -> &'static str {
     r#"# Neon Rain configuration
 #
-# Command-line options override this file. Normal exits remember the current
-# theme, palette, window state, flight mode, cinematic director, and media path
-# under XDG_STATE_HOME unless remember is false.
+# A scene applies a coordinated theme, palette, camera flight, FOV, and
+# cinematic setting. Values later in this file can override the scene.
+# Command-line options override this file.
+#
+# Normal exits remember current choices under XDG_STATE_HOME unless remember
+# is false. Home reloads this file while Neon Rain is running. End saves the
+# current session immediately.
 
+scene = classic-matrix
 theme = classic
 palette = theme
 fullscreen = true
 window_width = 1280
 window_height = 720
+field_of_view = 60
 auto_flight = forward
 cinematic = true
 media_enabled = true
@@ -323,17 +491,6 @@ fn parse_size(value: &str) -> Result<(u32, u32), String> {
     Ok((width, height))
 }
 
-fn load_preferences(path: &Path, mut preferences: Preferences) -> io::Result<Preferences> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(preferences),
-        Err(error) => return Err(error),
-    };
-
-    apply_config_text(&text, &mut preferences);
-    Ok(preferences)
-}
-
 fn apply_config_text(text: &str, preferences: &mut Preferences) {
     for line in text.lines() {
         let line = line.trim();
@@ -349,6 +506,11 @@ fn apply_config_text(text: &str, preferences: &mut Preferences) {
         let value = value.trim().trim_matches('"');
 
         match key {
+            "scene" if !value.is_empty() => {
+                if let Err(error) = apply_scene(preferences, value) {
+                    eprintln!("Ignoring {error} in configuration");
+                }
+            }
             "theme" if !value.is_empty() => preferences.theme = value.to_owned(),
             "palette" if !value.is_empty() => preferences.palette = value.to_owned(),
             "fullscreen" => {
@@ -364,6 +526,11 @@ fn apply_config_text(text: &str, preferences: &mut Preferences) {
             "window_height" => {
                 if let Ok(parsed) = value.parse::<u32>() {
                     preferences.window_height = parsed;
+                }
+            }
+            "field_of_view" | "fov" => {
+                if let Ok(parsed) = value.parse::<u32>() {
+                    preferences.field_of_view = parsed;
                 }
             }
             "auto_flight" if !value.is_empty() => preferences.auto_flight = value.to_owned(),
@@ -390,6 +557,18 @@ fn apply_config_text(text: &str, preferences: &mut Preferences) {
     }
 }
 
+fn clamp_preferences(preferences: &mut Preferences) {
+    preferences.window_width = preferences.window_width.clamp(320, 16384);
+    preferences.window_height = preferences.window_height.clamp(240, 16384);
+    preferences.field_of_view = preferences.field_of_view.clamp(32, 88);
+}
+
+fn normalize_name(name: &str) -> String {
+    name.trim()
+        .to_ascii_lowercase()
+        .replace(&['_', ' '][..], "-")
+}
+
 fn parse_bool(value: &str) -> Option<bool> {
     match value.to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Some(true),
@@ -410,25 +589,39 @@ mod tests {
     }
 
     #[test]
-    fn config_overrides_defaults() {
+    fn scene_applies_coordinated_values() {
+        let mut preferences = Preferences::default();
+        apply_scene(&mut preferences, "lucid").unwrap();
+
+        assert_eq!(preferences.scene, "lucid-dream");
+        assert_eq!(preferences.theme, "dream");
+        assert_eq!(preferences.palette, "vaporwave");
+        assert_eq!(preferences.auto_flight, "weave");
+        assert_eq!(preferences.field_of_view, 66);
+    }
+
+    #[test]
+    fn later_config_values_override_scene() {
         let mut preferences = Preferences::default();
         apply_config_text(
-            "theme = dream\npalette = vaporwave\nfullscreen = false\nremember = no\n",
+            "scene = cyber-tunnel\npalette = rainbow\nfield_of_view = 72\n",
             &mut preferences,
         );
 
-        assert_eq!(preferences.theme, "dream");
-        assert_eq!(preferences.palette, "vaporwave");
-        assert!(!preferences.fullscreen);
-        assert!(!preferences.remember);
+        assert_eq!(preferences.scene, "cyber-tunnel");
+        assert_eq!(preferences.theme, "surge");
+        assert_eq!(preferences.palette, "rainbow");
+        assert_eq!(preferences.field_of_view, 72);
     }
 
     #[test]
     fn render_round_trips_core_values() {
         let preferences = Preferences {
+            scene: "custom".to_owned(),
             theme: "surge".to_owned(),
             palette: "cyberpunk".to_owned(),
             fullscreen: false,
+            field_of_view: 54,
             auto_flight: "weave".to_owned(),
             ..Preferences::default()
         };
@@ -436,9 +629,11 @@ mod tests {
         let mut reparsed = Preferences::default();
         apply_config_text(&rendered, &mut reparsed);
 
+        assert_eq!(reparsed.scene, "custom");
         assert_eq!(reparsed.theme, "surge");
         assert_eq!(reparsed.palette, "cyberpunk");
         assert!(!reparsed.fullscreen);
+        assert_eq!(reparsed.field_of_view, 54);
         assert_eq!(reparsed.auto_flight, "weave");
     }
 }

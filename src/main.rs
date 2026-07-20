@@ -6,6 +6,7 @@ mod resilience;
 mod settings;
 mod signal_inspector;
 mod simulation;
+mod status_overlay;
 
 use std::{
     collections::HashMap,
@@ -35,6 +36,7 @@ use music::{MusicColorMode, MusicReactor};
 use settings::{CliAction, LaunchOptions, Preferences};
 use signal_inspector::SignalInspector;
 use simulation::{GLYPHS_PER_STREAM, Simulation};
+use status_overlay::StatusOverlay;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -2214,6 +2216,7 @@ struct State {
     bloom: Bloom,
     signal_inspector: SignalInspector,
     help_overlay: HelpOverlay,
+    status_overlay: StatusOverlay,
 
     simulation: Simulation,
     last_frame: Instant,
@@ -2230,10 +2233,12 @@ struct State {
     apparitions: Vec<MediaApparition>,
 
     paused: bool,
+    scene_name: String,
     mode: RainMode,
     palette_name: String,
     theme: ThemeRuntime,
     target_theme: ThemeProfile,
+    config_path: PathBuf,
     state_path: PathBuf,
     remember_preferences: bool,
 
@@ -2504,6 +2509,14 @@ impl State {
             size.height,
             window.scale_factor(),
         );
+        let status_overlay = StatusOverlay::new(
+            &device,
+            &queue,
+            surface_format.add_srgb_suffix(),
+            size.width,
+            size.height,
+            window.scale_factor(),
+        );
 
         let simulation = Simulation::new(size.width, size.height);
         let media = MediaField::from_path(media_path);
@@ -2520,11 +2533,13 @@ impl State {
         let mut camera = CameraState::default();
         camera.auto_flight = AutoFlightMode::from_name(&launch.preferences.auto_flight)
             .unwrap_or(AutoFlightMode::Forward);
+        camera.fov_y = launch.preferences.field_of_view as f32;
+        camera.target_fov_y = launch.preferences.field_of_view as f32;
 
         let mut cinematic_director = CinematicDirector::default();
         cinematic_director.enabled = launch.preferences.cinematic;
 
-        let state = Self {
+        let mut state = Self {
             instance,
             window,
 
@@ -2542,6 +2557,7 @@ impl State {
             bloom,
             signal_inspector,
             help_overlay,
+            status_overlay,
 
             simulation,
             last_frame: now,
@@ -2557,10 +2573,12 @@ impl State {
             apparitions: Vec::new(),
 
             paused: false,
+            scene_name: launch.preferences.scene.clone(),
             mode: initial_mode,
             palette_name,
             theme: ThemeRuntime::from_profile(initial_theme),
             target_theme: initial_theme,
+            config_path: launch.config_path.clone(),
             state_path: launch.state_path.clone(),
             remember_preferences: launch.preferences.remember,
 
@@ -2582,6 +2600,13 @@ impl State {
         };
 
         state.configure_surface();
+        let startup_message = format!(
+            "Scene: {}  •  Theme: {}  •  Palette: {}",
+            state.scene_name,
+            state.mode.profile().label,
+            state.palette_name,
+        );
+        state.status_overlay.show(&state.queue, &startup_message);
         state
     }
 
@@ -2627,6 +2652,12 @@ impl State {
             self.window.scale_factor(),
         );
         self.help_overlay.resize(
+            &self.queue,
+            new_size.width,
+            new_size.height,
+            self.window.scale_factor(),
+        );
+        self.status_overlay.resize(
             &self.queue,
             new_size.width,
             new_size.height,
@@ -2701,10 +2732,17 @@ impl State {
     }
 
     fn apply_theme(&mut self, mode: RainMode) {
+        self.scene_name = "custom".to_owned();
         self.mode = mode;
         let mut profile = mode.profile();
         apply_named_palette(&mut profile, &self.palette_name);
         self.target_theme = profile;
+
+        let message = format!(
+            "Theme: {}  •  Palette: {}",
+            self.target_theme.label, self.palette_name,
+        );
+        self.announce(&message);
 
         println!(
             "Transitioning to theme {}: {} with palette {}",
@@ -2722,11 +2760,19 @@ impl State {
             return;
         };
 
+        self.scene_name = "custom".to_owned();
         self.palette_name = normalized.to_owned();
         let mut profile = self.mode.profile();
         apply_named_palette(&mut profile, &self.palette_name);
         self.target_theme = profile;
         self.bloom.invalidate_history();
+
+        let message = format!(
+            "Palette: {}  •  Theme: {}",
+            self.palette_name,
+            self.mode.profile().label,
+        );
+        self.announce(&message);
 
         println!("Palette: {}", self.palette_name);
         self.print_controls();
@@ -2737,31 +2783,177 @@ impl State {
         self.set_palette(palette);
     }
 
-    fn save_preferences(&self) {
-        if !self.remember_preferences {
-            return;
-        }
+    fn announce(&mut self, message: &str) {
+        self.status_overlay.show(&self.queue, message);
+    }
 
-        let preferences = Preferences {
+    fn current_preferences(&self) -> Preferences {
+        Preferences {
+            scene: self.scene_name.clone(),
             theme: self.mode.slug().to_owned(),
             palette: self.palette_name.clone(),
             fullscreen: self.window.fullscreen().is_some(),
             window_width: self.size.width.max(1),
             window_height: self.size.height.max(1),
+            field_of_view: self.camera.target_fov_y.round().clamp(32.0, 88.0) as u32,
             auto_flight: self.camera.auto_flight.label().to_owned(),
             cinematic: self.cinematic_director.enabled,
             media_enabled: self.media.source_root.is_some(),
             media_path: self.media.source_root.clone(),
             remember: self.remember_preferences,
-        };
+        }
+    }
+
+    fn save_preferences(&mut self) {
+        if !self.remember_preferences {
+            println!("Remembered session saving is disabled");
+            return;
+        }
+
+        let preferences = self.current_preferences();
 
         if let Err(error) = settings::save_session(&self.state_path, &preferences) {
             eprintln!(
                 "Could not save remembered session settings to {}: {error}",
                 self.state_path.display(),
             );
+            self.announce("Could not save remembered session settings");
         } else {
             println!("Remembered session settings: {}", self.state_path.display(),);
+            self.announce("Saved current session settings");
+        }
+    }
+
+    fn apply_scene(&mut self, name: &str) {
+        let Some(scene) = settings::scene_preset(name) else {
+            eprintln!("Unknown scene: {name}");
+            self.announce("Unknown scene");
+            return;
+        };
+
+        let Some(mode) = RainMode::from_name(scene.theme) else {
+            eprintln!("Scene {} refers to an unknown theme", scene.slug);
+            return;
+        };
+        let Some(palette) = normalize_palette_name(scene.palette) else {
+            eprintln!("Scene {} refers to an unknown palette", scene.slug);
+            return;
+        };
+        let Some(flight) = AutoFlightMode::from_name(scene.auto_flight) else {
+            eprintln!("Scene {} refers to an unknown flight mode", scene.slug);
+            return;
+        };
+
+        self.scene_name = scene.slug.to_owned();
+        self.mode = mode;
+        self.palette_name = palette.to_owned();
+
+        let mut profile = mode.profile();
+        apply_named_palette(&mut profile, &self.palette_name);
+        self.target_theme = profile;
+
+        self.camera.auto_flight = flight;
+        self.camera.target_fov_y = scene.field_of_view as f32;
+        self.cinematic_director.enabled = scene.cinematic;
+        self.cinematic_director.timer = 0.0;
+        self.cinematic_director.next_change = 8.0;
+        self.bloom.invalidate_history();
+
+        let message = format!(
+            "Scene: {}  •  {} + {}  •  flight:{}",
+            scene.label,
+            mode.profile().label,
+            self.palette_name,
+            flight.label(),
+        );
+        self.announce(&message);
+        println!("{message}");
+        self.print_controls();
+    }
+
+    fn cycle_scene(&mut self) {
+        let next = settings::next_scene_preset(&self.scene_name);
+        self.apply_scene(next.slug);
+    }
+
+    fn reload_config(&mut self) {
+        let preferences = match settings::load_config(&self.config_path, Preferences::default()) {
+            Ok(preferences) => preferences,
+            Err(error) => {
+                eprintln!("Could not reload {}: {error}", self.config_path.display(),);
+                self.announce("Could not reload configuration");
+                return;
+            }
+        };
+
+        let Some(mode) = RainMode::from_name(&preferences.theme) else {
+            self.announce("Config contains an unknown theme");
+            return;
+        };
+        let Some(palette) = normalize_palette_name(&preferences.palette) else {
+            self.announce("Config contains an unknown palette");
+            return;
+        };
+        let Some(flight) = AutoFlightMode::from_name(&preferences.auto_flight) else {
+            self.announce("Config contains an unknown flight mode");
+            return;
+        };
+
+        self.scene_name = preferences.scene.clone();
+        self.mode = mode;
+        self.palette_name = palette.to_owned();
+
+        let mut profile = mode.profile();
+        apply_named_palette(&mut profile, &self.palette_name);
+        self.target_theme = profile;
+
+        self.camera.auto_flight = flight;
+        self.camera.target_fov_y = preferences.field_of_view as f32;
+        self.cinematic_director.enabled = preferences.cinematic;
+
+        let requested_fullscreen = preferences.fullscreen;
+        if requested_fullscreen != self.window.fullscreen().is_some() {
+            let fullscreen = requested_fullscreen.then(|| Fullscreen::Borderless(None));
+            self.window.set_fullscreen(fullscreen);
+        }
+
+        if !requested_fullscreen {
+            let _ = self.window.request_inner_size(winit::dpi::LogicalSize::new(
+                preferences.window_width as f64,
+                preferences.window_height as f64,
+            ));
+        }
+
+        let new_media_path = preferences
+            .media_enabled
+            .then(|| preferences.media_path.clone())
+            .flatten();
+
+        if new_media_path != self.media.source_root {
+            self.media = MediaField::from_path(new_media_path);
+            self.apparitions.clear();
+        }
+
+        self.remember_preferences = preferences.remember;
+        self.bloom.invalidate_history();
+
+        let message = format!(
+            "Reloaded config  •  scene:{}  •  theme:{}  •  palette:{}",
+            self.scene_name,
+            self.mode.slug(),
+            self.palette_name,
+        );
+        self.announce(&message);
+        println!("Reloaded configuration: {}", self.config_path.display());
+        self.print_controls();
+    }
+
+    fn toggle_status_overlay(&mut self) {
+        let enabled = self.status_overlay.toggle_enabled();
+        println!("Status overlay: {}", if enabled { "on" } else { "off" },);
+
+        if enabled {
+            self.announce("Status overlay enabled");
         }
     }
 
@@ -4923,6 +5115,7 @@ impl State {
     fn update(&mut self) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_frame).as_secs_f32();
+        self.status_overlay.update(dt);
 
         self.last_frame = now;
 
@@ -5084,6 +5277,9 @@ impl State {
             self.theme.bloom_settings(),
             self.paused,
         );
+
+        self.status_overlay
+            .render(&self.device, &self.queue, &mut encoder, &view);
 
         self.help_overlay
             .render(&self.device, &self.queue, &mut encoder, &view);
@@ -5272,6 +5468,22 @@ impl ApplicationHandler for App {
 
                     KeyCode::F11 if pressed && !repeat => {
                         state.toggle_fullscreen();
+                    }
+
+                    KeyCode::F12 if pressed && !repeat => {
+                        state.cycle_scene();
+                    }
+
+                    KeyCode::Home if pressed && !repeat => {
+                        state.reload_config();
+                    }
+
+                    KeyCode::End if pressed && !repeat => {
+                        state.save_preferences();
+                    }
+
+                    KeyCode::Insert if pressed && !repeat => {
+                        state.toggle_status_overlay();
                     }
 
                     KeyCode::Space if pressed && !repeat => {
@@ -5583,46 +5795,64 @@ impl ApplicationHandler for App {
 
 fn print_cli_help() {
     println!(
-        "Neon Rain {}\n\
-         \n\
-         A living, music-reactive Matrix rain visualizer.\n\
-         \n\
-         Usage:\n\
-           neon-rain [OPTIONS] [MEDIA_PATH]\n\
-         \n\
-         Appearance:\n\
-           --theme NAME          Select a named motion/theme profile\n\
-           --palette NAME        Apply an independent color palette\n\
-           --list-themes         List available theme names\n\
-           --list-palettes       List available palette names\n\
-         \n\
-         Window and motion:\n\
-           --fullscreen          Start borderless fullscreen\n\
-           --windowed            Start in a normal window\n\
-           --size WIDTHxHEIGHT   Set the initial window size\n\
-           --auto-flight MODE    off, forward, weave, orbit, or tunnel\n\
-           --cinematic           Enable the cinematic director\n\
-           --no-cinematic        Disable the cinematic director\n\
-         \n\
-         Media:\n\
-           --image PATH          Use one image as the media source\n\
-           --media-dir PATH      Load images from a directory\n\
-           --media               Enable configured media\n\
-           --no-media            Disable local media coupling\n\
-           --warm-cache          Prepare the media coupling cache and exit\n\
-         \n\
-         Configuration:\n\
-           --config PATH         Use a specific configuration file\n\
-           --print-config        Print effective settings and exit\n\
-           --write-default-config  Create the default XDG config and exit\n\
-           --reset-session       Clear remembered session choices\n\
-           --remember            Load and save remembered choices\n\
-           --no-remember         Ignore and do not save session choices\n\
-         \n\
-           -h, --help            Show this help and exit\n\
-           -V, --version         Show the version and exit",
+        r#"Neon Rain {}
+
+A living, music-reactive Matrix rain visualizer.
+
+Usage:
+  neon-rain [OPTIONS] [MEDIA_PATH]
+
+Appearance:
+  --scene NAME            Select a coordinated scene preset
+  --list-scenes           List available scene names
+  --theme NAME            Select a named motion/theme profile
+  --palette NAME          Apply an independent color palette
+  --list-themes           List available theme names
+  --list-palettes         List available palette names
+
+Window and motion:
+  --fullscreen            Start borderless fullscreen
+  --windowed              Start in a normal window
+  --size WIDTHxHEIGHT     Set the initial window size
+  --fov DEGREES           Set vertical field of view from 32 to 88
+  --auto-flight MODE      off, forward, weave, orbit, or tunnel
+  --cinematic             Enable the cinematic director
+  --no-cinematic          Disable the cinematic director
+
+Media:
+  --image PATH            Use one image as the media source
+  --media-dir PATH        Load images from a directory
+  --media                 Enable configured media
+  --no-media              Disable local media coupling
+  --warm-cache            Prepare the media coupling cache and exit
+
+Configuration:
+  --config PATH           Use a specific configuration file
+  --print-config          Print effective settings and exit
+  --write-default-config  Create the default XDG config and exit
+  --reset-session         Clear remembered session choices
+  --remember              Load and save remembered choices
+  --no-remember           Ignore and do not save session choices
+
+  -h, --help              Show this help and exit
+  -V, --version           Show the version and exit"#,
         env!("CARGO_PKG_VERSION"),
     );
+}
+
+fn print_scenes() {
+    println!("Available Neon Rain scenes:");
+    for scene in settings::scene_presets() {
+        println!(
+            "  {:<16} {}  [{} + {}, flight:{}, fov:{}]",
+            scene.slug,
+            scene.label,
+            scene.theme,
+            scene.palette,
+            scene.auto_flight,
+            scene.field_of_view,
+        );
+    }
 }
 
 fn print_themes() {
@@ -5663,6 +5893,10 @@ fn main() {
         }
         CliAction::Version => {
             println!("neon-rain {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        CliAction::ListScenes => {
+            print_scenes();
             return;
         }
         CliAction::ListThemes => {
@@ -5755,12 +5989,14 @@ fn main() {
     }
 
     println!(
-        "Startup settings: theme={} palette={} fullscreen={} size={}x{} flight={} cinematic={} remember={}",
+        "Startup settings: scene={} theme={} palette={} fullscreen={} size={}x{} fov={} flight={} cinematic={} remember={}",
+        launch.preferences.scene,
         launch.preferences.theme,
         launch.preferences.palette,
         launch.preferences.fullscreen,
         launch.preferences.window_width,
         launch.preferences.window_height,
+        launch.preferences.field_of_view,
         launch.preferences.auto_flight,
         launch.preferences.cinematic,
         launch.preferences.remember,

@@ -32,6 +32,12 @@ The configuration file supplies intentional defaults. A normal application exit 
 
 Command-line arguments override both files.
 
+## Live configuration controls
+
+- `Home` reloads the editable configuration while Neon Rain is running.
+- `End` saves the current choices to remembered session state immediately.
+- `Insert` toggles the short on-screen status messages.
+
 ## Create a configuration
 
 ```bash
@@ -56,6 +62,25 @@ Disable session loading and saving for one launch:
 
 ```bash
 neon-rain --no-remember
+```
+
+## Scene presets
+
+Scenes combine theme, palette, automatic flight, field of view, and cinematic behavior:
+
+```bash
+neon-rain --list-scenes
+neon-rain --scene cyber-tunnel
+```
+
+Press `F12` to cycle complete scenes. See [Scene presets](SCENES.md).
+
+The `scene` line should normally appear before individual values in the configuration. Later values can deliberately override part of a scene:
+
+```ini
+scene = lucid-dream
+palette = ice
+field_of_view = 72
 ```
 
 ## Themes
@@ -145,6 +170,7 @@ palette = vaporwave
 fullscreen = true
 window_width = 1920
 window_height = 1080
+field_of_view = 66
 auto_flight = weave
 cinematic = true
 media_enabled = true

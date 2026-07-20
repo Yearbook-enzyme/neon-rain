@@ -48,6 +48,16 @@ nix run github:Yearbook-enzyme/neon-rain/v0.1.0-alpha.2
 
 A generic `x86_64` Linux archive and its SHA-256 checksum are available from the v0.1.0-alpha.2 GitHub release.
 
+### Complete scenes
+
+```bash
+nix run . -- --scene lucid-dream
+nix run . -- --scene cyber-tunnel
+nix run . -- --list-scenes
+```
+
+Scenes coordinate theme, palette, camera flight, field of view, and cinematic behavior. Press `F12` to cycle them while running.
+
 ### Named themes and palettes
 
 ```bash
@@ -99,6 +109,7 @@ The original detailed project README—including controls, feature notes, and im
 - [Portability status](docs/PORTABILITY.md)
 - [Generic Linux bundle](docs/GENERIC_LINUX.md)
 - [Configuration](docs/CONFIGURATION.md)
+- [Scene presets](docs/SCENES.md)
 - [Screenshots and demo capture](docs/CAPTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
