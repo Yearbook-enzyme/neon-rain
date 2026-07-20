@@ -3,6 +3,7 @@ mod bloom;
 mod help_overlay;
 mod music;
 mod resilience;
+mod settings;
 mod signal_inspector;
 mod simulation;
 
@@ -31,6 +32,7 @@ use atlas::{ATLAS_HEIGHT, ATLAS_WIDTH, create_glyph_atlas};
 use bloom::{Bloom, BloomSettings, HDR_FORMAT};
 use help_overlay::HelpOverlay;
 use music::{MusicColorMode, MusicReactor};
+use settings::{CliAction, LaunchOptions, Preferences};
 use signal_inspector::SignalInspector;
 use simulation::{GLYPHS_PER_STREAM, Simulation};
 
@@ -212,6 +214,17 @@ enum AutoFlightMode {
 }
 
 impl AutoFlightMode {
+    fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" => Some(Self::Off),
+            "forward" | "straight" => Some(Self::Forward),
+            "weave" | "drift" => Some(Self::Weave),
+            "orbit" => Some(Self::Orbit),
+            "tunnel" => Some(Self::Tunnel),
+            _ => None,
+        }
+    }
+
     fn next(self) -> Self {
         match self {
             Self::Off => Self::Forward,
@@ -1647,7 +1660,129 @@ struct ThemeProfile {
     history_deposit: f32,
 }
 
+const PALETTE_NAMES: [&str; 6] = ["theme", "cyberpunk", "vaporwave", "ice", "ember", "rainbow"];
+
+fn normalize_palette_name(name: &str) -> Option<&'static str> {
+    match name.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "theme" | "native" | "default" => Some("theme"),
+        "cyberpunk" | "cyber" => Some("cyberpunk"),
+        "vaporwave" | "vapor" => Some("vaporwave"),
+        "ice" | "frost" => Some("ice"),
+        "ember" | "fire" => Some("ember"),
+        "rainbow" | "spectrum" | "prismatic" => Some("rainbow"),
+        _ => None,
+    }
+}
+
+fn apply_named_palette(profile: &mut ThemeProfile, palette: &str) -> bool {
+    match normalize_palette_name(palette) {
+        Some("theme") => true,
+        Some("cyberpunk") => {
+            profile.body_color = [0.02, 1.05, 0.92];
+            profile.head_color = [1.16, 1.10, 1.22];
+            profile.cascade_color = [1.04, 0.06, 0.92];
+            profile.glow_color = [0.08, 0.20, 0.52];
+            profile.background_color = [0.00003, 0.00008, 0.00052];
+            profile.wide_bloom *= 1.18;
+            true
+        }
+        Some("vaporwave") => {
+            profile.body_color = [1.02, 0.12, 0.82];
+            profile.head_color = [0.76, 1.12, 1.18];
+            profile.cascade_color = [0.18, 0.92, 1.12];
+            profile.glow_color = [0.36, 0.04, 0.48];
+            profile.background_color = [0.00046, 0.00002, 0.00062];
+            profile.wide_bloom *= 1.24;
+            true
+        }
+        Some("ice") => {
+            profile.body_color = [0.24, 0.76, 1.06];
+            profile.head_color = [0.94, 1.12, 1.18];
+            profile.cascade_color = [0.48, 0.94, 1.12];
+            profile.glow_color = [0.04, 0.22, 0.40];
+            profile.background_color = [0.00002, 0.00016, 0.00042];
+            true
+        }
+        Some("ember") => {
+            profile.body_color = [1.12, 0.26, 0.025];
+            profile.head_color = [1.22, 0.98, 0.54];
+            profile.cascade_color = [1.18, 0.52, 0.06];
+            profile.glow_color = [0.46, 0.055, 0.004];
+            profile.background_color = [0.00100, 0.00010, 0.00001];
+            profile.near_bloom *= 1.08;
+            true
+        }
+        Some("rainbow") => {
+            profile.body_color = [0.05, 1.04, 0.34];
+            profile.head_color = [0.78, 1.08, 1.18];
+            profile.cascade_color = [1.08, 0.10, 0.90];
+            profile.glow_color = [0.04, 0.28, 0.52];
+            profile.background_color = [0.00014, 0.00004, 0.00042];
+            profile.wide_bloom *= 1.28;
+            true
+        }
+        _ => false,
+    }
+}
+
+fn next_palette_name(current: &str) -> &'static str {
+    let normalized = normalize_palette_name(current).unwrap_or("theme");
+    let index = PALETTE_NAMES
+        .iter()
+        .position(|candidate| *candidate == normalized)
+        .unwrap_or(0);
+    PALETTE_NAMES[(index + 1) % PALETTE_NAMES.len()]
+}
+
 impl RainMode {
+    fn all() -> [Self; 9] {
+        [
+            Self::Quiet,
+            Self::Classic,
+            Self::Surge,
+            Self::Dream,
+            Self::Amber,
+            Self::RedAlert,
+            Self::Ultraviolet,
+            Self::Ghost,
+            Self::Monochrome,
+        ]
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name
+            .trim()
+            .to_ascii_lowercase()
+            .replace(&['_', ' '][..], "-")
+            .as_str()
+        {
+            "1" | "quiet" => Some(Self::Quiet),
+            "2" | "classic" | "matrix" | "classic-matrix" => Some(Self::Classic),
+            "3" | "surge" | "green-surge" => Some(Self::Surge),
+            "4" | "dream" | "dream-cyan" => Some(Self::Dream),
+            "5" | "amber" | "amber-terminal" => Some(Self::Amber),
+            "6" | "red" | "red-alert" => Some(Self::RedAlert),
+            "7" | "ultraviolet" | "uv" => Some(Self::Ultraviolet),
+            "8" | "ghost" => Some(Self::Ghost),
+            "9" | "monochrome" | "mono" => Some(Self::Monochrome),
+            _ => None,
+        }
+    }
+
+    fn slug(self) -> &'static str {
+        match self {
+            Self::Quiet => "quiet",
+            Self::Classic => "classic",
+            Self::Surge => "surge",
+            Self::Dream => "dream",
+            Self::Amber => "amber",
+            Self::RedAlert => "red-alert",
+            Self::Ultraviolet => "ultraviolet",
+            Self::Ghost => "ghost",
+            Self::Monochrome => "monochrome",
+        }
+    }
+
     fn from_preset(preset: u8) -> Option<Self> {
         match preset {
             1 => Some(Self::Quiet),
@@ -2096,8 +2231,11 @@ struct State {
 
     paused: bool,
     mode: RainMode,
+    palette_name: String,
     theme: ThemeRuntime,
     target_theme: ThemeProfile,
+    state_path: PathBuf,
+    remember_preferences: bool,
 
     exposure: f32,
     target_exposure: f32,
@@ -2122,6 +2260,7 @@ impl State {
         display: OwnedDisplayHandle,
         window: Arc<Window>,
         media_path: Option<PathBuf>,
+        launch: &LaunchOptions,
     ) -> Self {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle(
             Box::new(display),
@@ -2369,7 +2508,21 @@ impl State {
         let simulation = Simulation::new(size.width, size.height);
         let media = MediaField::from_path(media_path);
         let now = Instant::now();
-        let initial_theme = RainMode::Classic.profile();
+
+        let initial_mode =
+            RainMode::from_name(&launch.preferences.theme).unwrap_or(RainMode::Classic);
+        let palette_name = normalize_palette_name(&launch.preferences.palette)
+            .unwrap_or("theme")
+            .to_owned();
+        let mut initial_theme = initial_mode.profile();
+        apply_named_palette(&mut initial_theme, &palette_name);
+
+        let mut camera = CameraState::default();
+        camera.auto_flight = AutoFlightMode::from_name(&launch.preferences.auto_flight)
+            .unwrap_or(AutoFlightMode::Forward);
+
+        let mut cinematic_director = CinematicDirector::default();
+        cinematic_director.enabled = launch.preferences.cinematic;
 
         let state = Self {
             instance,
@@ -2394,19 +2547,22 @@ impl State {
             last_frame: now,
 
             motion_time: 0.0,
-            cinematic_director: CinematicDirector::default(),
+            cinematic_director,
             music: MusicReactor::new(),
 
-            camera: CameraState::default(),
+            camera,
             camera_input: CameraInput::default(),
             media,
             apparition_system: ApparitionSystem::default(),
             apparitions: Vec::new(),
 
             paused: false,
-            mode: RainMode::Classic,
+            mode: initial_mode,
+            palette_name,
             theme: ThemeRuntime::from_profile(initial_theme),
             target_theme: initial_theme,
+            state_path: launch.state_path.clone(),
+            remember_preferences: launch.preferences.remember,
 
             exposure: 1.0,
             target_exposure: 1.0,
@@ -2481,8 +2637,9 @@ impl State {
 
     fn print_controls(&self) {
         println!(
-            "theme={}  paused={}  rain_speed={:.2}  glow={:.2}  exposure={:.2}  camera=({:.1}, {:.1}, {:.1})  yaw={:.1} pitch={:.1} fov={:.1} move_speed={:.1} flight={} director={} look={} reticle={} media={} opacity={:.2} contrast={:.2} scale={:.2} depth={:.1} offset=({:+.1}, {:+.1}) lock={} guide={} preview={} coupling={} cycle={} {:.1}s affected={}/{} apparitions={} count={} freq={:.2} rainmusic:d{:.2} e{:.2} g{:.2}",
+            "theme={}  palette={}  paused={}  rain_speed={:.2}  glow={:.2}  exposure={:.2}  camera=({:.1}, {:.1}, {:.1})  yaw={:.1} pitch={:.1} fov={:.1} move_speed={:.1} flight={} director={} look={} reticle={} media={} opacity={:.2} contrast={:.2} scale={:.2} depth={:.1} offset=({:+.1}, {:+.1}) lock={} guide={} preview={} coupling={} cycle={} {:.1}s affected={}/{} apparitions={} count={} freq={:.2} rainmusic:d{:.2} e{:.2} g{:.2}",
             self.mode.profile().label,
+            self.palette_name,
             self.paused,
             self.theme.speed_scale,
             self.theme.glow_strength,
@@ -2545,15 +2702,67 @@ impl State {
 
     fn apply_theme(&mut self, mode: RainMode) {
         self.mode = mode;
-        self.target_theme = mode.profile();
+        let mut profile = mode.profile();
+        apply_named_palette(&mut profile, &self.palette_name);
+        self.target_theme = profile;
 
         println!(
-            "Transitioning to theme {}: {}",
+            "Transitioning to theme {}: {} with palette {}",
             mode.preset(),
             self.target_theme.label,
+            self.palette_name,
         );
 
         self.print_controls();
+    }
+
+    fn set_palette(&mut self, palette: &str) {
+        let Some(normalized) = normalize_palette_name(palette) else {
+            eprintln!("Unknown palette: {palette}");
+            return;
+        };
+
+        self.palette_name = normalized.to_owned();
+        let mut profile = self.mode.profile();
+        apply_named_palette(&mut profile, &self.palette_name);
+        self.target_theme = profile;
+        self.bloom.invalidate_history();
+
+        println!("Palette: {}", self.palette_name);
+        self.print_controls();
+    }
+
+    fn cycle_palette(&mut self) {
+        let palette = next_palette_name(&self.palette_name);
+        self.set_palette(palette);
+    }
+
+    fn save_preferences(&self) {
+        if !self.remember_preferences {
+            return;
+        }
+
+        let preferences = Preferences {
+            theme: self.mode.slug().to_owned(),
+            palette: self.palette_name.clone(),
+            fullscreen: self.window.fullscreen().is_some(),
+            window_width: self.size.width.max(1),
+            window_height: self.size.height.max(1),
+            auto_flight: self.camera.auto_flight.label().to_owned(),
+            cinematic: self.cinematic_director.enabled,
+            media_enabled: self.media.source_root.is_some(),
+            media_path: self.media.source_root.clone(),
+            remember: self.remember_preferences,
+        };
+
+        if let Err(error) = settings::save_session(&self.state_path, &preferences) {
+            eprintln!(
+                "Could not save remembered session settings to {}: {error}",
+                self.state_path.display(),
+            );
+        } else {
+            println!("Remembered session settings: {}", self.state_path.display(),);
+        }
     }
 
     fn cycle_media_mode(&mut self) {
@@ -4899,7 +5108,7 @@ fn calculate_aspect(size: winit::dpi::PhysicalSize<u32>) -> f32 {
 
 struct App {
     state: Option<State>,
-    media_path: Option<PathBuf>,
+    launch: LaunchOptions,
 }
 
 impl ApplicationHandler for App {
@@ -4908,21 +5117,29 @@ impl ApplicationHandler for App {
             return;
         }
 
+        let mut window_attributes = Window::default_attributes()
+            .with_title("Neon Rain")
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                self.launch.preferences.window_width as f64,
+                self.launch.preferences.window_height as f64,
+            ));
+
+        if self.launch.preferences.fullscreen {
+            window_attributes =
+                window_attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
+
         let window = Arc::new(
             event_loop
-                .create_window(
-                    Window::default_attributes()
-                        .with_title("Neon Rain")
-                        .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
-                        .with_fullscreen(Some(Fullscreen::Borderless(None))),
-                )
+                .create_window(window_attributes)
                 .expect("Failed to create window"),
         );
 
         let state = pollster::block_on(State::new(
             event_loop.owned_display_handle(),
             window.clone(),
-            self.media_path.clone(),
+            self.launch.media_path(),
+            &self.launch,
         ));
 
         self.state = Some(state);
@@ -4945,6 +5162,7 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::CloseRequested => {
+                state.save_preferences();
                 event_loop.exit();
             }
 
@@ -5047,6 +5265,7 @@ impl ApplicationHandler for App {
                         if state.camera.mouse_look {
                             state.set_mouse_look(false);
                         } else {
+                            state.save_preferences();
                             event_loop.exit();
                         }
                     }
@@ -5195,6 +5414,10 @@ impl ApplicationHandler for App {
 
                     KeyCode::KeyM if pressed && !repeat => {
                         state.cycle_media_mode();
+                    }
+
+                    KeyCode::F3 if pressed && !repeat => {
+                        state.cycle_palette();
                     }
 
                     KeyCode::F4 if pressed && !repeat => {
@@ -5358,41 +5581,6 @@ impl ApplicationHandler for App {
     }
 }
 
-fn initial_media_path() -> Option<PathBuf> {
-    let mut arguments = env::args().skip(1);
-    let mut explicit_path = None;
-    let mut media_disabled = false;
-
-    while let Some(argument) = arguments.next() {
-        match argument.as_str() {
-            "--image" | "--media-dir" => {
-                explicit_path = arguments.next().map(PathBuf::from);
-            }
-            "--no-media" => {
-                media_disabled = true;
-            }
-            value if !value.starts_with('-') && explicit_path.is_none() => {
-                explicit_path = Some(PathBuf::from(value));
-            }
-            _ => {}
-        }
-    }
-
-    if media_disabled {
-        return None;
-    }
-
-    if explicit_path.is_some() {
-        return explicit_path;
-    }
-
-    let default_path = env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join("Documents/pictures/vizualizer wallpapers"));
-
-    default_path.filter(|path| path.exists())
-}
-
 fn print_cli_help() {
     println!(
         "Neon Rain {}\n\
@@ -5402,51 +5590,154 @@ fn print_cli_help() {
          Usage:\n\
            neon-rain [OPTIONS] [MEDIA_PATH]\n\
          \n\
-         Options:\n\
-           --image PATH       Use one image as the media source\n\
-           --media-dir PATH   Load images from a directory\n\
-           --no-media         Disable local media coupling\n\
-           --warm-cache       Prepare the media coupling cache and exit\n\
-           -h, --help         Show this help and exit\n\
-           -V, --version      Show the version and exit",
+         Appearance:\n\
+           --theme NAME          Select a named motion/theme profile\n\
+           --palette NAME        Apply an independent color palette\n\
+           --list-themes         List available theme names\n\
+           --list-palettes       List available palette names\n\
+         \n\
+         Window and motion:\n\
+           --fullscreen          Start borderless fullscreen\n\
+           --windowed            Start in a normal window\n\
+           --size WIDTHxHEIGHT   Set the initial window size\n\
+           --auto-flight MODE    off, forward, weave, orbit, or tunnel\n\
+           --cinematic           Enable the cinematic director\n\
+           --no-cinematic        Disable the cinematic director\n\
+         \n\
+         Media:\n\
+           --image PATH          Use one image as the media source\n\
+           --media-dir PATH      Load images from a directory\n\
+           --media               Enable configured media\n\
+           --no-media            Disable local media coupling\n\
+           --warm-cache          Prepare the media coupling cache and exit\n\
+         \n\
+         Configuration:\n\
+           --config PATH         Use a specific configuration file\n\
+           --print-config        Print effective settings and exit\n\
+           --write-default-config  Create the default XDG config and exit\n\
+           --reset-session       Clear remembered session choices\n\
+           --remember            Load and save remembered choices\n\
+           --no-remember         Ignore and do not save session choices\n\
+         \n\
+           -h, --help            Show this help and exit\n\
+           -V, --version         Show the version and exit",
         env!("CARGO_PKG_VERSION"),
     );
 }
 
-fn handle_early_cli_arguments() -> bool {
-    let arguments = env::args().skip(1).collect::<Vec<_>>();
-
-    if arguments
-        .iter()
-        .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
-    {
-        print_cli_help();
-        return true;
+fn print_themes() {
+    println!("Available Neon Rain themes:");
+    for mode in RainMode::all() {
+        println!(
+            "  {:<13} preset={}  {}",
+            mode.slug(),
+            mode.preset(),
+            mode.profile().label,
+        );
     }
+}
 
-    if arguments
-        .iter()
-        .any(|argument| matches!(argument.as_str(), "-V" | "--version"))
-    {
-        println!("neon-rain {}", env!("CARGO_PKG_VERSION"));
-        return true;
+fn print_palettes() {
+    println!("Available Neon Rain palettes:");
+    for palette in PALETTE_NAMES {
+        println!("  {palette}");
     }
-
-    false
 }
 
 fn main() {
     env_logger::init();
 
-    if handle_early_cli_arguments() {
-        return;
+    let launch = match settings::parse_launch_options() {
+        Ok(launch) => launch,
+        Err(error) => {
+            eprintln!("neon-rain: {error}\n");
+            print_cli_help();
+            std::process::exit(2);
+        }
+    };
+
+    match launch.action {
+        CliAction::Help => {
+            print_cli_help();
+            return;
+        }
+        CliAction::Version => {
+            println!("neon-rain {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        CliAction::ListThemes => {
+            print_themes();
+            return;
+        }
+        CliAction::ListPalettes => {
+            print_palettes();
+            return;
+        }
+        CliAction::PrintConfig => {
+            print!("{}", settings::render_preferences(&launch.preferences));
+            println!("# config_path = {}", launch.config_path.display());
+            println!("# state_path = {}", launch.state_path.display());
+            return;
+        }
+        CliAction::WriteDefaultConfig => {
+            match settings::write_default_config(&launch.config_path) {
+                Ok(()) => println!(
+                    "Created Neon Rain configuration: {}",
+                    launch.config_path.display(),
+                ),
+                Err(error) => {
+                    eprintln!("Could not create {}: {error}", launch.config_path.display(),);
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        CliAction::ResetSession => {
+            match settings::reset_session(&launch.state_path) {
+                Ok(true) => println!(
+                    "Removed remembered session: {}",
+                    launch.state_path.display(),
+                ),
+                Ok(false) => println!(
+                    "No remembered session existed at {}",
+                    launch.state_path.display(),
+                ),
+                Err(error) => {
+                    eprintln!("Could not reset {}: {error}", launch.state_path.display(),);
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+        CliAction::Run => {}
     }
 
-    let media_path = initial_media_path();
-    let warm_cache = env::args().any(|argument| argument == "--warm-cache");
+    if RainMode::from_name(&launch.preferences.theme).is_none() {
+        eprintln!(
+            "Unknown theme {:?}. Run --list-themes.",
+            launch.preferences.theme,
+        );
+        std::process::exit(2);
+    }
 
-    if warm_cache {
-        if let Some(path) = media_path {
+    if normalize_palette_name(&launch.preferences.palette).is_none() {
+        eprintln!(
+            "Unknown palette {:?}. Run --list-palettes.",
+            launch.preferences.palette,
+        );
+        std::process::exit(2);
+    }
+
+    if AutoFlightMode::from_name(&launch.preferences.auto_flight).is_none() {
+        eprintln!(
+            "Unknown auto-flight mode {:?}. Use off, forward, weave, orbit, or tunnel.",
+            launch.preferences.auto_flight,
+        );
+        std::process::exit(2);
+    }
+
+    if launch.warm_cache {
+        if let Some(path) = launch.media_path() {
             let media = MediaField::from_path(Some(path));
             println!(
                 "Persistent coupling cache ready: {}/{} images",
@@ -5463,13 +5754,26 @@ fn main() {
         return;
     }
 
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
+    println!(
+        "Startup settings: theme={} palette={} fullscreen={} size={}x{} flight={} cinematic={} remember={}",
+        launch.preferences.theme,
+        launch.preferences.palette,
+        launch.preferences.fullscreen,
+        launch.preferences.window_width,
+        launch.preferences.window_height,
+        launch.preferences.auto_flight,
+        launch.preferences.cinematic,
+        launch.preferences.remember,
+    );
+    println!("Configuration: {}", launch.config_path.display());
+    println!("Remembered session: {}", launch.state_path.display());
 
+    let event_loop = EventLoop::new().expect("Failed to create event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App {
         state: None,
-        media_path,
+        launch,
     };
 
     event_loop.run_app(&mut app).expect("Application error");

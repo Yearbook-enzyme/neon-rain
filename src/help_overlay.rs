@@ -25,6 +25,7 @@ SCENE
 Space       Pause / resume
 F11         Toggle fullscreen
 [ / ]       Previous / next theme
+F3          Cycle color palette
 0           Strong media defaults
 1 - 9       Theme presets
 - / =       Exposure down / up"#;

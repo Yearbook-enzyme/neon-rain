@@ -37,6 +37,7 @@ let
     comment = "Living, music-reactive Matrix rain";
     exec = "neon-rain";
     terminal = false;
+    icon = "neon-rain";
     categories = [ "Graphics" ];
   };
 
@@ -70,8 +71,18 @@ rustPlatform.buildRustPackage {
   buildInputs = runtimeLibraries;
 
   postInstall = ''
-    mkdir -p "$out/share/applications"
+    mkdir -p \
+      "$out/share/applications" \
+      "$out/share/pixmaps" \
+      "$out/share/neon-rain"
+
     cp -r ${desktopItem}/share/applications/* "$out/share/applications/"
+    cp docs/assets/neon-rain-social-preview.png \
+      "$out/share/pixmaps/neon-rain.png"
+    cp config/neon-rain.conf \
+      "$out/share/neon-rain/config.example.conf"
+    install -m 0755 scripts/capture-neon-rain.sh \
+      "$out/bin/neon-rain-capture"
 
     wrapProgram "$out/bin/neon-rain" \
       --prefix PATH : ${lib.makeBinPath [

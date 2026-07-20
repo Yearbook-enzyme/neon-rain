@@ -48,6 +48,22 @@ nix run github:Yearbook-enzyme/neon-rain/v0.1.0-alpha.2
 
 A generic `x86_64` Linux archive and its SHA-256 checksum are available from the v0.1.0-alpha.2 GitHub release.
 
+### Named themes and palettes
+
+```bash
+nix run . -- --theme dream --palette vaporwave
+nix run . -- --theme surge --palette cyberpunk
+```
+
+List the available names:
+
+```bash
+nix run . -- --list-themes
+nix run . -- --list-palettes
+```
+
+Neon Rain reads editable settings from the XDG configuration directory and remembers normal-exit session choices under the XDG state directory. See [Configuration](docs/CONFIGURATION.md).
+
 ### Development shell
 
 ```bash
@@ -82,6 +98,8 @@ The original detailed project README—including controls, feature notes, and im
 - [Deployment notes](docs/DEPLOYMENT.md)
 - [Portability status](docs/PORTABILITY.md)
 - [Generic Linux bundle](docs/GENERIC_LINUX.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [Screenshots and demo capture](docs/CAPTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Security policy](SECURITY.md)

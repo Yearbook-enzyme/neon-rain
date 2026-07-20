@@ -29,7 +29,10 @@ rm -rf "$STAGE" "$ARCHIVE" "$ARCHIVE.sha256"
 mkdir -p \
   "$STAGE/bin" \
   "$STAGE/share/applications" \
-  "$STAGE/share/doc/neon-rain"
+  "$STAGE/share/doc/neon-rain" \
+  "$STAGE/share/pixmaps" \
+  "$STAGE/share/neon-rain" \
+  "$STAGE/tools"
 
 install -m 0755 target/release/neon-rain "$STAGE/bin/neon-rain"
 install -m 0644 packaging/linux/neon-rain.desktop \
@@ -38,6 +41,16 @@ install -m 0644 LICENSE "$STAGE/share/doc/neon-rain/LICENSE"
 install -m 0644 README.md "$STAGE/share/doc/neon-rain/README.md"
 install -m 0644 docs/GENERIC_LINUX.md \
   "$STAGE/share/doc/neon-rain/GENERIC_LINUX.md"
+install -m 0644 docs/CONFIGURATION.md \
+  "$STAGE/share/doc/neon-rain/CONFIGURATION.md"
+install -m 0644 docs/CAPTURE.md \
+  "$STAGE/share/doc/neon-rain/CAPTURE.md"
+install -m 0644 docs/assets/neon-rain-social-preview.png \
+  "$STAGE/share/pixmaps/neon-rain.png"
+install -m 0644 config/neon-rain.conf \
+  "$STAGE/share/neon-rain/config.example.conf"
+install -m 0755 scripts/capture-neon-rain.sh \
+  "$STAGE/tools/capture-neon-rain.sh"
 
 cat > "$STAGE/neon-rain" <<'LAUNCHER'
 #!/usr/bin/env bash
@@ -94,9 +107,11 @@ VERSIONED_NAME="$(basename "$SOURCE")"
 INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/neon-rain"
 BIN_DIR="$HOME/.local/bin"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/neon-rain"
 TARGET="$INSTALL_ROOT/$VERSIONED_NAME"
 
-mkdir -p "$INSTALL_ROOT" "$BIN_DIR" "$APP_DIR"
+mkdir -p "$INSTALL_ROOT" "$BIN_DIR" "$APP_DIR" "$ICON_DIR" "$CONFIG_DIR"
 rm -rf "$TARGET"
 cp -a "$SOURCE" "$TARGET"
 ln -sfn "$TARGET/neon-rain" "$BIN_DIR/neon-rain"
@@ -105,6 +120,16 @@ sed \
   "s|^Exec=.*|Exec=$BIN_DIR/neon-rain|" \
   "$SOURCE/share/applications/neon-rain.desktop" \
   > "$APP_DIR/neon-rain.desktop"
+
+install -m 0644 "$SOURCE/share/pixmaps/neon-rain.png" \
+  "$ICON_DIR/neon-rain.png"
+
+if [[ ! -e "$CONFIG_DIR/config.conf" ]]; then
+  install -m 0644 "$SOURCE/share/neon-rain/config.example.conf" \
+    "$CONFIG_DIR/config.conf"
+  echo "Created initial configuration:"
+  echo "  $CONFIG_DIR/config.conf"
+fi
 
 echo "Installed Neon Rain to:"
 echo "  $TARGET"
@@ -115,6 +140,35 @@ echo
 echo "Make sure $BIN_DIR is in PATH."
 INSTALLER
 chmod 0755 "$STAGE/install-user.sh"
+
+cat > "$STAGE/uninstall-user.sh" <<'UNINSTALLER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/neon-rain"
+BIN_PATH="$HOME/.local/bin/neon-rain"
+APP_PATH="${XDG_DATA_HOME:-$HOME/.local/share}/applications/neon-rain.desktop"
+ICON_PATH="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/neon-rain.png"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/neon-rain"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/neon-rain"
+PURGE=false
+
+if [[ "${1:-}" == "--purge" ]]; then
+  PURGE=true
+fi
+
+rm -f "$BIN_PATH" "$APP_PATH" "$ICON_PATH"
+rm -rf "$INSTALL_ROOT"
+
+if [[ "$PURGE" == true ]]; then
+  rm -rf "$CONFIG_DIR" "$STATE_DIR"
+  echo "Removed Neon Rain, configuration, and remembered session state."
+else
+  echo "Removed Neon Rain. Configuration and remembered session state were preserved."
+  echo "Run with --purge to remove them too."
+fi
+UNINSTALLER
+chmod 0755 "$STAGE/uninstall-user.sh"
 
 "$STAGE/neon-rain" --version
 "$STAGE/neon-rain" --help >/dev/null

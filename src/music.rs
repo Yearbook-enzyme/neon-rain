@@ -3133,6 +3133,40 @@ fn capability_flag(name: &str) -> &'static str {
 }
 
 fn resolve_command(name: &str) -> PathBuf {
+    let override_key = format!(
+        "NEON_RAIN_COMMAND_{}",
+        name.to_ascii_uppercase().replace('-', "_"),
+    );
+    if let Some(candidate) = env::var_os(&override_key).map(PathBuf::from)
+        && candidate.is_file()
+    {
+        return candidate;
+    }
+
+    if let Some(path) = env::var_os("NEON_RAIN_HELPER_PATH").and_then(|path| {
+        env::split_paths(&path)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    }) {
+        return path;
+    }
+
+    if let Ok(executable) = env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        let adjacent = directory.join("helpers").join(name);
+        if adjacent.is_file() {
+            return adjacent;
+        }
+
+        if let Some(prefix) = directory.parent() {
+            let libexec = prefix.join("libexec").join("neon-rain").join(name);
+            if libexec.is_file() {
+                return libexec;
+            }
+        }
+    }
+
     if let Some(path) = env::var_os("PATH").and_then(|path| {
         env::split_paths(&path)
             .map(|directory| directory.join(name))

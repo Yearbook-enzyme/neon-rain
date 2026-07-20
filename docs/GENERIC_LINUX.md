@@ -74,3 +74,25 @@ Launch with an image directory:
 This bundle intentionally does not package Mesa, proprietary GPU drivers, Vulkan ICDs, PipeWire daemons, or desktop-session libraries. Those components must match the host system and are safer to use from the distribution.
 
 The initial bundle is a portability alpha. Reports should include the distribution and version, desktop/session, GPU, graphics backend, and sanitized terminal output.
+
+## Configuration and removal
+
+The per-user installer creates an initial configuration only when one does not already exist:
+
+```text
+~/.config/neon-rain/config.conf
+```
+
+Remove the installed bundle while preserving settings:
+
+```bash
+./uninstall-user.sh
+```
+
+Remove the bundle, configuration, and remembered session state:
+
+```bash
+./uninstall-user.sh --purge
+```
+
+The bundle also includes `tools/capture-neon-rain.sh` for screenshots and desktop video capture.

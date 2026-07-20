@@ -4,6 +4,7 @@ Name=Neon Rain
 Comment=Living, music-reactive Matrix rain visualizer
 Exec=neon-rain
 Terminal=false
+Icon=neon-rain
 Categories=Graphics;AudioVideo;
 Keywords=matrix;rain;visualizer;music;gpu;
 StartupNotify=true
