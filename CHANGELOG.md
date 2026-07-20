@@ -6,6 +6,10 @@ The project follows a pre-1.0 alpha development model. Interfaces, controls, con
 
 ## Unreleased
 
+No unreleased changes yet.
+
+## [0.1.0-alpha.1] - 2026-07-20
+
 ### Added
 
 - NixOS-first reproducible package and development shell
