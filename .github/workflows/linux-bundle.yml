@@ -1,0 +1,71 @@
+name: Linux bundle
+
+on:
+  push:
+    branches: [ main, "release/**" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: Ubuntu 22.04 portable archive
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            fontconfig \
+            fonts-noto-cjk \
+            libwayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libvulkan-dev \
+            libudev-dev
+
+      - name: Select stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Create generic Linux archive
+        run: scripts/package-linux-tarball.sh
+
+      - name: Inspect packaged executable
+        run: |
+          archive="$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+          test -n "$archive"
+          mkdir -p /tmp/neon-rain-bundle
+          tar -xzf "$archive" -C /tmp/neon-rain-bundle
+          launcher="$(find /tmp/neon-rain-bundle -mindepth 2 -maxdepth 2 -type f -name neon-rain -print -quit)"
+          test -x "$launcher"
+          "$launcher" --version
+          "$launcher" --help >/dev/null
+          ldd "$(dirname "$launcher")/bin/neon-rain"
+          sha256sum -c "$archive.sha256"
+
+      - name: Upload generic Linux bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-rain-x86_64-linux
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30

@@ -5393,8 +5393,54 @@ fn initial_media_path() -> Option<PathBuf> {
     default_path.filter(|path| path.exists())
 }
 
+fn print_cli_help() {
+    println!(
+        "Neon Rain {}\n\
+         \n\
+         A living, music-reactive Matrix rain visualizer.\n\
+         \n\
+         Usage:\n\
+           neon-rain [OPTIONS] [MEDIA_PATH]\n\
+         \n\
+         Options:\n\
+           --image PATH       Use one image as the media source\n\
+           --media-dir PATH   Load images from a directory\n\
+           --no-media         Disable local media coupling\n\
+           --warm-cache       Prepare the media coupling cache and exit\n\
+           -h, --help         Show this help and exit\n\
+           -V, --version      Show the version and exit",
+        env!("CARGO_PKG_VERSION"),
+    );
+}
+
+fn handle_early_cli_arguments() -> bool {
+    let arguments = env::args().skip(1).collect::<Vec<_>>();
+
+    if arguments
+        .iter()
+        .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
+    {
+        print_cli_help();
+        return true;
+    }
+
+    if arguments
+        .iter()
+        .any(|argument| matches!(argument.as_str(), "-V" | "--version"))
+    {
+        println!("neon-rain {}", env!("CARGO_PKG_VERSION"));
+        return true;
+    }
+
+    false
+}
+
 fn main() {
     env_logger::init();
+
+    if handle_early_cli_arguments() {
+        return;
+    }
 
     let media_path = initial_media_path();
     let warm_cache = env::args().any(|argument| argument == "--warm-cache");

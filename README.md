@@ -76,6 +76,7 @@ The original detailed project README—including controls, feature notes, and im
 
 - [Deployment notes](docs/DEPLOYMENT.md)
 - [Portability status](docs/PORTABILITY.md)
+- [Generic Linux bundle](docs/GENERIC_LINUX.md)
 - [Contributing](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Security policy](SECURITY.md)
@@ -97,7 +98,7 @@ Real screenshots and demo video are planned and may later replace or supplement 
 
 ## Roadmap
 
-Near-term priorities are repository presentation, public alpha testing, clearer configuration, and broader Linux packaging. Later targets include Arch/AUR or Flatpak distribution, Debian/Ubuntu packaging, Windows and macOS builds, and experiments with mobile platforms.
+Near-term priorities are public alpha testing, clearer configuration, and validation of the new generic Linux bundle. Later targets include Arch/AUR or Flatpak distribution, Debian/Ubuntu packaging, Windows and macOS builds, and experiments with mobile platforms.
 
 The visual roadmap also includes richer themed modes, more deliberate movement through the rain space, and deeper image/video coupling.
 
