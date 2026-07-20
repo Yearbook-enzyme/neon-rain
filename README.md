@@ -40,9 +40,13 @@ Press `Escape` to exit.
 
 ### Latest alpha release
 
+Nix:
+
 ```bash
-nix run github:Yearbook-enzyme/neon-rain/v0.1.0-alpha.1
+nix run github:Yearbook-enzyme/neon-rain/v0.1.0-alpha.2
 ```
+
+A generic `x86_64` Linux archive and its SHA-256 checksum are available from the v0.1.0-alpha.2 GitHub release.
 
 ### Development shell
 
@@ -63,7 +67,8 @@ cargo run --release -- --media-dir "/path/to/images"
 |---|---|
 | NixOS / Nix, `x86_64-linux` | Packaged and runtime-tested alpha |
 | Ubuntu, native Cargo build | Formatting, tests, Clippy, and release build in CI |
-| Other Linux distributions | Runtime testing and packaging planned |
+| Generic Linux, `x86_64` | Ubuntu-built tarball with checksum and launcher; runtime-tested on the current NixOS desktop |
+| Other Linux distributions | External runtime testing and additional packaging planned |
 | Windows | Planned |
 | macOS | Planned |
 | Android / iOS | Exploratory |
@@ -93,12 +98,13 @@ The current alpha has passed:
 - GitHub Actions CI
 - A fullscreen packaged smoke test on an AMD Radeon RX 580 using Vulkan
 - A clean-profile runtime test using an empty temporary home directory
+- A generic Linux archive checksum, extraction, CLI, and interactive runtime test
 
 Real screenshots and demo video are planned and may later replace or supplement the current branded banner.
 
 ## Roadmap
 
-Near-term priorities are public alpha testing, clearer configuration, and validation of the new generic Linux bundle. Later targets include Arch/AUR or Flatpak distribution, Debian/Ubuntu packaging, Windows and macOS builds, and experiments with mobile platforms.
+Near-term priorities are external Linux testing, clearer configuration, and packaging for additional distributions. Later targets include Arch/AUR or Flatpak distribution, Debian/Ubuntu packaging, Windows and macOS builds, and experiments with mobile platforms.
 
 The visual roadmap also includes richer themed modes, more deliberate movement through the rain space, and deeper image/video coupling.
 
