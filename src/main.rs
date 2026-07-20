@@ -4340,7 +4340,7 @@ impl State {
                                     let rain_v = (v + fall_phase).fract();
                                     let sway = (self.motion_time * 0.45
                                         + column as f32 * 0.37
-                                        + preview_seed * 6.28318)
+                                        + preview_seed * std::f32::consts::TAU)
                                         .sin()
                                         * 0.006;
                                     (u, v, (u + sway).clamp(0.0, 1.0), rain_v)
