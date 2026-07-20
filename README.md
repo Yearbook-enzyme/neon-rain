@@ -43,10 +43,10 @@ Press `Escape` to exit.
 Nix:
 
 ```bash
-nix run github:Yearbook-enzyme/neon-rain/v0.1.0-alpha.2
+nix run github:Yearbook-enzyme/neon-rain/v0.1.0-alpha.3
 ```
 
-A generic `x86_64` Linux archive and its SHA-256 checksum are available from the v0.1.0-alpha.2 GitHub release.
+A generic `x86_64` Linux archive and its SHA-256 checksum are available from the v0.1.0-alpha.3 GitHub release.
 
 ### Complete scenes
 
@@ -128,12 +128,13 @@ The current alpha has passed:
 - A fullscreen packaged smoke test on an AMD Radeon RX 580 using Vulkan
 - A clean-profile runtime test using an empty temporary home directory
 - A generic Linux archive checksum, extraction, CLI, and interactive runtime test
+- XDG configuration, remembered sessions, complete scenes, live reload, and status overlays
 
 Real screenshots and demo video are planned and may later replace or supplement the current branded banner.
 
 ## Roadmap
 
-Near-term priorities are external Linux testing, clearer configuration, and packaging for additional distributions. Later targets include Arch/AUR or Flatpak distribution, Debian/Ubuntu packaging, Windows and macOS builds, and experiments with mobile platforms.
+Near-term priorities are external Linux testing, visual preset refinement, and packaging for additional distributions. Later targets include Arch/AUR or Flatpak distribution, Debian/Ubuntu packaging, Windows and macOS builds, and experiments with mobile platforms.
 
 The visual roadmap also includes richer themed modes, more deliberate movement through the rain space, and deeper image/video coupling.
 

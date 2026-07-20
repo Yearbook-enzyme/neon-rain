@@ -66,6 +66,9 @@ neon-rain --no-remember
 
 ## Scene presets
 
+> **Scene-first configuration:** the installed example leaves theme, palette, FOV, flight, and cinematic overrides commented. Changing only `scene = ...` therefore applies the complete scene. Uncomment an override only when intentionally customizing part of it.
+
+
 Scenes combine theme, palette, automatic flight, field of view, and cinematic behavior:
 
 ```bash

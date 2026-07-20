@@ -404,23 +404,27 @@ pub fn load_config(path: &Path, mut preferences: Preferences) -> io::Result<Pref
 pub fn default_config_text() -> &'static str {
     r#"# Neon Rain configuration
 #
-# A scene applies a coordinated theme, palette, camera flight, FOV, and
-# cinematic setting. Values later in this file can override the scene.
-# Command-line options override this file.
+# A scene coordinates the theme, palette, automatic flight, field of view,
+# and cinematic behavior. Change the scene line for the simplest setup.
 #
-# Normal exits remember current choices under XDG_STATE_HOME unless remember
-# is false. Home reloads this file while Neon Rain is running. End saves the
-# current session immediately.
+# Uncomment individual visual values only when deliberately overriding part
+# of the selected scene. Command-line options override this file.
+#
+# Home reloads this file while Neon Rain is running. End saves the current
+# session under XDG_STATE_HOME. Normal exits also save when remember is true.
 
 scene = classic-matrix
-theme = classic
-palette = theme
+
+# Optional scene overrides:
+# theme = classic
+# palette = theme
+# field_of_view = 60
+# auto_flight = forward
+# cinematic = true
+
 fullscreen = true
 window_width = 1280
 window_height = 720
-field_of_view = 60
-auto_flight = forward
-cinematic = true
 media_enabled = true
 media_path =
 remember = true

@@ -2668,7 +2668,8 @@ impl State {
 
     fn print_controls(&self) {
         println!(
-            "theme={}  palette={}  paused={}  rain_speed={:.2}  glow={:.2}  exposure={:.2}  camera=({:.1}, {:.1}, {:.1})  yaw={:.1} pitch={:.1} fov={:.1} move_speed={:.1} flight={} director={} look={} reticle={} media={} opacity={:.2} contrast={:.2} scale={:.2} depth={:.1} offset=({:+.1}, {:+.1}) lock={} guide={} preview={} coupling={} cycle={} {:.1}s affected={}/{} apparitions={} count={} freq={:.2} rainmusic:d{:.2} e{:.2} g{:.2}",
+            "scene={}  theme={}  palette={}  paused={}  rain_speed={:.2}  glow={:.2}  exposure={:.2}  camera=({:.1}, {:.1}, {:.1})  yaw={:.1} pitch={:.1} fov={:.1} move_speed={:.1} flight={} director={} look={} reticle={} media={} opacity={:.2} contrast={:.2} scale={:.2} depth={:.1} offset=({:+.1}, {:+.1}) lock={} guide={} preview={} coupling={} cycle={} {:.1}s affected={}/{} apparitions={} count={} freq={:.2} rainmusic:d{:.2} e{:.2} g{:.2}",
+            self.scene_name,
             self.mode.profile().label,
             self.palette_name,
             self.paused,
