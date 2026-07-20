@@ -38,12 +38,10 @@ nix run .
 
 Press `Escape` to exit.
 
-### Public release command
-
-Once the repository is public:
+### Latest alpha release
 
 ```bash
-nix run github:Yearbook-enzyme/neon-rain
+nix run github:Yearbook-enzyme/neon-rain/v0.1.0-alpha.1
 ```
 
 ### Development shell
@@ -91,7 +89,7 @@ The current alpha has passed:
 - GitHub Actions CI
 - A fullscreen packaged smoke test on an AMD Radeon RX 580 using Vulkan
 
-Real screenshots and demo video will replace the temporary generated banner as the public release gets closer.
+Real screenshots and demo video are planned and may later replace or supplement the current branded banner.
 
 ## Roadmap
 
