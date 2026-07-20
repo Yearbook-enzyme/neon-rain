@@ -86,6 +86,7 @@ rustPlatform.buildRustPackage {
   meta = {
     description = "Living, music-reactive Matrix rain visualizer";
     homepage = "https://github.com/Yearbook-enzyme/neon-rain";
+    license = lib.licenses.mit;
     mainProgram = "neon-rain";
     platforms = lib.platforms.linux;
   };
