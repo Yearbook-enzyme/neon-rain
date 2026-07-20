@@ -21,13 +21,20 @@
           neon-rain = self.packages.${system}.default;
         });
 
-      apps = forAllSystems (system: {
-        default = {
-          type = "app";
-          program = "${self.packages.${system}.default}/bin/neon-rain";
-        };
-        neon-rain = self.apps.${system}.default;
-      });
+      apps = forAllSystems (system:
+        let
+          app = {
+            type = "app";
+            program = "${self.packages.${system}.default}/bin/neon-rain";
+            meta = {
+              description = "Launch the Neon Rain visualizer";
+            };
+          };
+        in
+        {
+          default = app;
+          neon-rain = app;
+        });
 
       checks = forAllSystems (system: {
         package = self.packages.${system}.default;

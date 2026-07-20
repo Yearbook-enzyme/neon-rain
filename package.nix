@@ -7,7 +7,11 @@
   pkg-config,
   fontconfig,
   libGL,
+  libx11,
+  libxcursor,
+  libxi,
   libxkbcommon,
+  libxrandr,
   migu,
   noto-fonts-cjk-sans,
   pipewire,
@@ -15,7 +19,6 @@
   python3,
   vulkan-loader,
   wayland,
-  xorg,
 }:
 
 let
@@ -34,19 +37,19 @@ let
     comment = "Living, music-reactive Matrix rain";
     exec = "neon-rain";
     terminal = false;
-    categories = [ "AudioVideo" "Graphics" ];
+    categories = [ "Graphics" ];
   };
 
   runtimeLibraries = [
     fontconfig
     libGL
+    libx11
+    libxcursor
+    libxi
     libxkbcommon
+    libxrandr
     vulkan-loader
     wayland
-    xorg.libX11
-    xorg.libXcursor
-    xorg.libXi
-    xorg.libXrandr
   ];
 in
 rustPlatform.buildRustPackage {
