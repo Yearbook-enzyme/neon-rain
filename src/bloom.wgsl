@@ -93,6 +93,17 @@ var previous_history_texture: texture_2d<f32>;
 @group(0) @binding(2)
 var history_sampler: sampler;
 
+struct BloomSettings {
+    near_strength: f32,
+    wide_strength: f32,
+    history_retention: f32,
+    history_deposit: f32,
+    background_color: vec4<f32>,
+};
+
+@group(0) @binding(3)
+var<uniform> history_settings: BloomSettings;
+
 @fragment
 fn fs_history(input: VertexOutput) -> @location(0) vec4<f32> {
     let dimensions =
@@ -150,8 +161,8 @@ fn fs_history(input: VertexOutput) -> @location(0) vec4<f32> {
     // residue, preventing a permanent pale atmospheric pattern.
     let retention =
         mix(
-            0.78,
-            0.87,
+            history_settings.history_retention * 0.90,
+            history_settings.history_retention,
             smoothstep(
                 0.08,
                 0.85,
@@ -163,7 +174,7 @@ fn fs_history(input: VertexOutput) -> @location(0) vec4<f32> {
         previous * retention;
 
     let deposited =
-        current * 0.15;
+        current * history_settings.history_deposit;
 
     let history =
         max(
@@ -193,6 +204,9 @@ var wide_bloom_texture: texture_2d<f32>;
 @group(0) @binding(3)
 var composite_sampler: sampler;
 
+@group(0) @binding(4)
+var<uniform> composite_settings: BloomSettings;
+
 fn aces_tonemap(color: vec3<f32>) -> vec3<f32> {
     let a = 2.51;
     let b = 0.03;
@@ -210,36 +224,90 @@ fn aces_tonemap(color: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_composite(input: VertexOutput) -> @location(0) vec4<f32> {
-    let original = textureSample(
-        original_texture,
-        composite_sampler,
-        input.uv
-    ).rgb;
+    let original =
+        textureSample(
+            original_texture,
+            composite_sampler,
+            input.uv,
+        ).rgb;
 
-    // Original, near bloom, and wide bloom now share one
-    // consistent top-left texture orientation.
-    let near_bloom = textureSample(
-        near_bloom_texture,
-        composite_sampler,
-        input.uv
-    ).rgb;
+    let near_bloom =
+        textureSample(
+            near_bloom_texture,
+            composite_sampler,
+            input.uv,
+        ).rgb;
 
-    let wide_bloom = textureSample(
-        wide_bloom_texture,
-        composite_sampler,
-        input.uv
-    ).rgb;
+    let wide_bloom =
+        textureSample(
+            wide_bloom_texture,
+            composite_sampler,
+            input.uv,
+        ).rgb;
 
-    // Near bloom hugs glyphs; temporal wide bloom leaves a descending light trail.
-    let near_strength = 0.90;
-    let wide_strength = 0.30;
+    let hdr_light =
+        original
+        + near_bloom
+            * composite_settings.near_strength
+        + wide_bloom
+            * composite_settings.wide_strength;
 
-    let hdr_color = original
-        + near_bloom * near_strength
-        + wide_bloom * wide_strength;
+    // Final composition grading.
+    let background_floor =
+        composite_settings.background_color.rgb;
 
-    return vec4<f32>(aces_tonemap(hdr_color), 1.0);
+    let screen_point =
+        input.uv * 2.0
+        - vec2<f32>(1.0);
+
+    let vignette_point =
+        screen_point
+            * vec2<f32>(
+                0.82,
+                1.0,
+            );
+
+    let elliptical_radius =
+        dot(
+            vignette_point,
+            vignette_point,
+        );
+
+    let vignette =
+        1.0
+        - smoothstep(
+            0.48,
+            1.42,
+            elliptical_radius,
+        ) * composite_settings.background_color.a;
+
+    let vertical_grade =
+        mix(
+            1.025,
+            0.975,
+            smoothstep(
+                0.0,
+                1.0,
+                input.uv.y,
+            ),
+        );
+
+    let graded_hdr =
+        (
+            background_floor
+            + hdr_light
+        )
+        * vignette
+        * vertical_grade;
+
+    return vec4<f32>(
+        aces_tonemap(
+            graded_hdr,
+        ),
+        1.0,
+    );
 }
+
 
 @fragment
 fn fs_blur_vertical_wide(input: VertexOutput) -> @location(0) vec4<f32> {

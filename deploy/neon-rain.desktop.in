@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Neon Rain
+Comment=Living music-reactive Matrix world
+Exec=__BINDIR__/neon-rain
+Terminal=false
+Categories=AudioVideo;Graphics;
+Keywords=matrix;visualizer;music;wgpu;
+StartupNotify=false

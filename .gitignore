@@ -2,3 +2,23 @@
 *.backup
 *.bitmap-backup
 *.texture-atlas-backup
+
+# Local build products and patch safety backups
+target/
+.stage2-backup-*/
+.finish-pass-backup-*/
+.finish-pass-v2-backup-*/
+.bloom-backup/
+src/*.before-*
+*.before-*
+*.profraw
+.theme-engine-backup-*/
+.themed-palettes-backup-*/
+.worldspace-backup-*/
+.media-field-backup-*/
+
+.world-camera-backup-*/
+result
+result-*
+.direnv/
+.*-backup-*/

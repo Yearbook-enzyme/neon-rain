@@ -1,3 +1,17 @@
+use bytemuck::{Pod, Zeroable};
+use wgpu::util::DeviceExt;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct BloomSettings {
+    pub near_strength: f32,
+    pub wide_strength: f32,
+    pub history_retention: f32,
+    pub history_deposit: f32,
+    // red, green, blue, vignette strength
+    pub background_color: [f32; 4],
+}
+
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 struct RenderTarget {
@@ -53,6 +67,7 @@ pub struct Bloom {
     history_valid: bool,
 
     sampler: wgpu::Sampler,
+    settings_buffer: wgpu::Buffer,
 
     post_bind_group_layout: wgpu::BindGroupLayout,
     composite_bind_group_layout: wgpu::BindGroupLayout,
@@ -148,6 +163,20 @@ impl Bloom {
             ..Default::default()
         });
 
+        let initial_settings = BloomSettings {
+            near_strength: 0.90,
+            wide_strength: 0.30,
+            history_retention: 0.86,
+            history_deposit: 0.15,
+            background_color: [0.00018, 0.00145, 0.00048, 0.16],
+        };
+
+        let settings_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Bloom settings buffer"),
+            contents: bytemuck::bytes_of(&initial_settings),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         let post_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Bloom post-process bind group layout"),
@@ -183,6 +212,16 @@ impl Bloom {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
                 ],
             });
 
@@ -197,6 +236,16 @@ impl Bloom {
                         binding: 3,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
                         count: None,
                     },
                 ],
@@ -250,6 +299,7 @@ impl Bloom {
             &wide_vertical_target.view,
             &history_a_target.view,
             &sampler,
+            &settings_buffer,
             "Bloom history A to B bind group",
         );
         let history_b_to_a_bind_group = Self::create_history_bind_group(
@@ -258,6 +308,7 @@ impl Bloom {
             &wide_vertical_target.view,
             &history_b_target.view,
             &sampler,
+            &settings_buffer,
             "Bloom history B to A bind group",
         );
         let composite_history_a_bind_group = Self::create_composite_bind_group(
@@ -267,6 +318,7 @@ impl Bloom {
             &near_vertical_target.view,
             &history_a_target.view,
             &sampler,
+            &settings_buffer,
         );
         let composite_history_b_bind_group = Self::create_composite_bind_group(
             device,
@@ -275,6 +327,7 @@ impl Bloom {
             &near_vertical_target.view,
             &history_b_target.view,
             &sampler,
+            &settings_buffer,
         );
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -371,6 +424,7 @@ impl Bloom {
             history_a_is_previous: true,
             history_valid: false,
             sampler,
+            settings_buffer,
             post_bind_group_layout,
             composite_bind_group_layout,
             history_bind_group_layout,
@@ -480,6 +534,7 @@ impl Bloom {
         current_view: &wgpu::TextureView,
         previous_view: &wgpu::TextureView,
         sampler: &wgpu::Sampler,
+        settings_buffer: &wgpu::Buffer,
         label: &str,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -498,6 +553,10 @@ impl Bloom {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(sampler),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: settings_buffer.as_entire_binding(),
+                },
             ],
         })
     }
@@ -509,6 +568,7 @@ impl Bloom {
         near_view: &wgpu::TextureView,
         wide_view: &wgpu::TextureView,
         sampler: &wgpu::Sampler,
+        settings_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Bloom composite bind group"),
@@ -529,6 +589,10 @@ impl Bloom {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: settings_buffer.as_entire_binding(),
                 },
             ],
         })
@@ -640,6 +704,7 @@ impl Bloom {
             &self.wide_vertical_target.view,
             &self.history_a_target.view,
             &self.sampler,
+            &self.settings_buffer,
             "Bloom history A to B bind group",
         );
         self.history_b_to_a_bind_group = Self::create_history_bind_group(
@@ -648,6 +713,7 @@ impl Bloom {
             &self.wide_vertical_target.view,
             &self.history_b_target.view,
             &self.sampler,
+            &self.settings_buffer,
             "Bloom history B to A bind group",
         );
         self.composite_history_a_bind_group = Self::create_composite_bind_group(
@@ -657,6 +723,7 @@ impl Bloom {
             &self.near_vertical_target.view,
             &self.history_a_target.view,
             &self.sampler,
+            &self.settings_buffer,
         );
         self.composite_history_b_bind_group = Self::create_composite_bind_group(
             device,
@@ -665,6 +732,7 @@ impl Bloom {
             &self.near_vertical_target.view,
             &self.history_b_target.view,
             &self.sampler,
+            &self.settings_buffer,
         );
     }
 
@@ -716,11 +784,20 @@ impl Bloom {
         });
     }
 
+    pub fn invalidate_history(&mut self) {
+        self.history_valid = false;
+    }
+
     pub fn composite(
         &mut self,
+        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         output_view: &wgpu::TextureView,
+        settings: BloomSettings,
+        paused: bool,
     ) {
+        queue.write_buffer(&self.settings_buffer, 0, bytemuck::bytes_of(&settings));
+
         Self::run_pass(
             encoder,
             "Bloom bright-pass render pass",
@@ -763,6 +840,7 @@ impl Bloom {
             &self.wide_vertical_pipeline,
             &self.wide_vertical_bind_group,
         );
+
         if !self.history_valid {
             Self::clear_target(
                 encoder,
@@ -775,6 +853,24 @@ impl Bloom {
                 &self.history_b_target.view,
             );
             self.history_valid = true;
+        }
+
+        if paused {
+            let composite_bind_group = if self.history_a_is_previous {
+                &self.composite_history_a_bind_group
+            } else {
+                &self.composite_history_b_bind_group
+            };
+
+            Self::run_pass(
+                encoder,
+                "Bloom paused composite render pass",
+                output_view,
+                &self.composite_pipeline,
+                composite_bind_group,
+            );
+
+            return;
         }
 
         let (history_target, history_bind_group, composite_bind_group) =

@@ -26,6 +26,9 @@ struct VertexInput {
     color_glow: vec4<f32>,
 
     @location(2)
+    glow_color: vec4<f32>,
+
+    @location(3)
     glyph_data: vec4<u32>,
 };
 
@@ -46,6 +49,16 @@ struct VertexOutput {
     @location(3)
     @interpolate(flat)
     depth_band: u32,
+
+    @location(4)
+    glow_color: vec3<f32>,
+
+    @location(5)
+    depth01: f32,
+
+    @location(6)
+    @interpolate(flat)
+    render_kind: u32,
 };
 
 fn atlas_uv(
@@ -209,6 +222,14 @@ fn vs_main(
     output.color_glow = input.color_glow;
     output.glyph_index = input.glyph_data.x;
     output.depth_band = input.glyph_data.y;
+    output.glow_color = input.glow_color.rgb;
+    output.depth01 =
+        clamp(
+            input.glow_color.a,
+            0.0,
+            1.0,
+        );
+    output.render_kind = input.glyph_data.z;
 
     return output;
 }
@@ -217,12 +238,34 @@ fn vs_main(
 fn fs_main(
     input: VertexOutput,
 ) -> @location(0) vec4<f32> {
+    if (input.render_kind == 1u) {
+        let point = abs(input.local_point);
+
+        let horizontal =
+            (1.0 - smoothstep(0.045, 0.105, point.y))
+            * smoothstep(0.18, 0.28, point.x)
+            * (1.0 - smoothstep(0.64, 0.82, point.x));
+
+        let vertical =
+            (1.0 - smoothstep(0.045, 0.105, point.x))
+            * smoothstep(0.18, 0.28, point.y)
+            * (1.0 - smoothstep(0.64, 0.82, point.y));
+
+        let reticle = max(horizontal, vertical);
+
+        if (reticle < 0.001) {
+            discard;
+        }
+
+        let reticle_color =
+            input.color_glow.rgb * reticle
+            + input.glow_color * input.color_glow.a * reticle * 0.35;
+
+        return vec4<f32>(reticle_color, 1.0);
+    }
+
     let depth01 =
-        clamp(
-            f32(input.depth_band) / 4.0,
-            0.0,
-            1.0,
-        );
+        input.depth01;
 
     let glyph_sample =
         sample_glyph(
@@ -282,20 +325,17 @@ fn fs_main(
             depth01,
         );
 
-    // Far atmosphere is slightly cooler. The nearest plane returns
-    // to the stronger primary Matrix green.
-    let glow_green =
+    // Theme-provided glow color remains slightly cooler and more
+    // diffuse in the distant planes.
+    let atmospheric_glow =
         mix(
-            vec3<f32>(
-                0.0,
-                0.29,
-                0.11,
-            ),
-            vec3<f32>(
-                0.0,
-                0.38,
-                0.075,
-            ),
+            input.glow_color
+                * vec3<f32>(
+                    0.72,
+                    0.80,
+                    1.20,
+                ),
+            input.glow_color,
             depth01,
         );
 
@@ -303,7 +343,7 @@ fn fs_main(
         input.color_glow.rgb
             * glyph_core
             * core_weight
-        + glow_green
+        + atmospheric_glow
             * input.color_glow.a
             * glyph_glow
             * glow_weight;
