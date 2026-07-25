@@ -1,0 +1,82 @@
+name: Debian package
+
+on:
+  push:
+    branches: [ main, "release/**", "feature/debian-package" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deb:
+    name: Ubuntu 22.04 .deb
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            dpkg-dev \
+            fontconfig \
+            fonts-noto-cjk \
+            libwayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            libvulkan-dev \
+            libudev-dev
+
+      - name: Select stable Rust
+        run: |
+          rustup update stable
+          rustup default stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Build Debian package
+        run: scripts/package-deb.sh
+
+      - name: Inspect package
+        run: |
+          deb="$(find dist -maxdepth 1 -name '*.deb' -print -quit)"
+          test -n "$deb"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb"
+          (
+            cd dist
+            sha256sum -c "$(basename "$deb").sha256"
+          )
+
+      - name: Install and exercise CLI
+        run: |
+          deb="$(find dist -maxdepth 1 -name '*.deb' -print -quit)"
+          sudo apt-get install -y "$deb"
+          neon-rain --version
+          neon-rain --help >/dev/null
+          neon-rain --list-scenes | grep -F lucid-dream
+          test -f /usr/share/applications/neon-rain.desktop
+          test -f /usr/share/icons/hicolor/512x512/apps/neon-rain.png
+          sudo apt-get remove -y neon-rain
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-rain-debian-amd64
+          path: |
+            dist/*.deb
+            dist/*.deb.sha256
+          if-no-files-found: error
+          retention-days: 30
