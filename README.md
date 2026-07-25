@@ -11,6 +11,14 @@
 
 # Neon Rain
 
+## Video showcase
+
+[![Watch the Neon Rain showcase](https://peertube.wtf/w/i5r1HJC8qnMr4LPuips3YJ)
+
+The showcase demonstrates audio reactivity through Strawberry,
+world-space movement, themed modes, color systems, cinematic effects,
+wallpaper integration, and other visual controls.
+
 **Neon Rain is a GPU-accelerated Matrix rain visualizer that behaves more like a living audiovisual space than a screensaver.**
 
 It combines a world-space glyph simulation, cinematic camera motion, bloom, music-responsive behavior, image-field coupling, and optional media enrichment in a native Rust + `wgpu` application.
@@ -129,8 +137,6 @@ The current alpha has passed:
 - A clean-profile runtime test using an empty temporary home directory
 - A generic Linux archive checksum, extraction, CLI, and interactive runtime test
 - XDG configuration, remembered sessions, complete scenes, live reload, and status overlays
-
-Real screenshots and demo video are planned and may later replace or supplement the current branded banner.
 
 ## Roadmap
 
