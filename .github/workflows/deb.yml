@@ -2,7 +2,7 @@ name: Debian package
 
 on:
   push:
-    branches: [ main, "release/**", "feature/debian-package" ]
+    branches: [ main, "release/**" ]
   pull_request:
   workflow_dispatch:
 
@@ -63,7 +63,7 @@ jobs:
       - name: Install and exercise CLI
         run: |
           deb="$(find dist -maxdepth 1 -name '*.deb' -print -quit)"
-          sudo apt-get install -y "$deb"
+          sudo apt-get install -y "./$deb"
           neon-rain --version
           neon-rain --help >/dev/null
           neon-rain --list-scenes | grep -F lucid-dream
