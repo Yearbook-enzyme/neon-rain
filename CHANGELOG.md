@@ -8,6 +8,7 @@ The project follows a pre-1.0 alpha development model. Interfaces, controls, con
 
 ### Added
 
+- Upstream nixpkgs package template, hash preparation script, maintainer setup, and submission guide
 - Local Flatpak manifest, offline Cargo sources, AppStream metadata, bundle workflow, and sandbox testing guide
 
 No unreleased changes yet.

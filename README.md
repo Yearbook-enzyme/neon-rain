@@ -114,6 +114,7 @@ The renderer uses `wgpu`, but platform support also depends on windowing, audio,
 The original detailed project README—including controls, feature notes, and implementation-era reference material—has been preserved as [docs/REFERENCE.md](docs/REFERENCE.md).
 
 - [Deployment notes](docs/DEPLOYMENT.md)
+- [Upstream nixpkgs submission](docs/NIXPKGS.md)
 - [Portability status](docs/PORTABILITY.md)
 - [Generic Linux bundle](docs/GENERIC_LINUX.md)
 - [Flatpak prototype](docs/FLATPAK.md)
