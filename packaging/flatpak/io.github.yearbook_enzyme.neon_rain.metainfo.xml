@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.yearbook_enzyme.neon_rain</id>
+  <name>Neon Rain</name>
+  <summary>Living, music-reactive Matrix rain visualizer</summary>
+  <developer id="io.github.yearbook_enzyme">
+    <name>Logan Campbell</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <launchable type="desktop-id">io.github.yearbook_enzyme.neon_rain.desktop</launchable>
+  <description>
+    <p>
+      Neon Rain renders a persistent GPU-accelerated Matrix rain world with
+      cinematic camera motion, image-field coupling, configurable scenes, and
+      optional music-reactive behavior.
+    </p>
+    <p>
+      It is implemented in Rust with wgpu and supports both Wayland and X11
+      desktop sessions.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/Yearbook-enzyme/neon-rain</url>
+  <url type="bugtracker">https://github.com/Yearbook-enzyme/neon-rain/issues</url>
+  <provides>
+    <binary>neon-rain</binary>
+  </provides>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0-alpha.3" date="2026-07-20">
+      <description>
+        <p>Scene presets, XDG configuration, live reload, session persistence, and Linux packaging improvements.</p>
+      </description>
+    </release>
+  </releases>
+</component>

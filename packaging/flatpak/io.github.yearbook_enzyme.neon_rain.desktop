@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Neon Rain
+Comment=Living, music-reactive Matrix rain visualizer
+Exec=neon-rain
+Icon=io.github.yearbook_enzyme.neon_rain
+Categories=AudioVideo;Graphics;
+Keywords=matrix;rain;visualizer;music;gpu;
+StartupNotify=true
