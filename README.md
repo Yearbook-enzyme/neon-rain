@@ -12,7 +12,7 @@
 # Neon Rain
 
 ## Video showcase
-[![Watch the Neon Rain showcase](docs/images/video-thumbnail.jpg)](https://peertube.wtf/w/i5r1HJC8qnMr4LPuips3YJ)
+[![Watch the Neon Rain showcase](docs/assets/Screenshot_20260725_083326.png)](https://peertube.wtf/w/i5r1HJC8qnMr4LPuips3YJ)
 
 The showcase demonstrates audio reactivity through Strawberry,
 world-space movement, themed modes, color systems, cinematic effects,
