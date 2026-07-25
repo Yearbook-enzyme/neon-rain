@@ -1,0 +1,48 @@
+name: Flatpak prototype
+
+on:
+  push:
+    branches: [ main, "release/**" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flatpak:
+    name: Freedesktop 25.08 bundle
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Flatpak builder
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends appstream elfutils flatpak flatpak-builder
+
+      - name: Configure Flathub
+        run: |
+          flatpak remote-add --if-not-exists --user \
+            flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Build and bundle
+        run: scripts/build-flatpak.sh
+
+      - name: Inspect bundle checksum
+        run: |
+          bundle="$(find dist -maxdepth 1 -name '*.flatpak' -print -quit)"
+          test -n "$bundle"
+          sha256sum -c "$bundle.sha256"
+          flatpak info --user io.github.yearbook_enzyme.neon_rain
+
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-rain-flatpak
+          path: |
+            dist/*.flatpak
+            dist/*.flatpak.sha256
+          if-no-files-found: error
+          retention-days: 30

@@ -101,6 +101,7 @@ cargo run --release -- --media-dir "/path/to/images"
 | NixOS / Nix, `x86_64-linux` | Packaged and runtime-tested alpha |
 | Ubuntu, native Cargo build | Formatting, tests, Clippy, and release build in CI |
 | Generic Linux, `x86_64` | Ubuntu-built tarball with checksum and launcher; runtime-tested on the current NixOS desktop |
+| Flatpak | Local Freedesktop 25.08 prototype and bundle workflow; sandbox audio testing pending |
 | Other Linux distributions | External runtime testing and additional packaging planned |
 | Windows | Planned |
 | macOS | Planned |
@@ -115,6 +116,7 @@ The original detailed project README—including controls, feature notes, and im
 - [Deployment notes](docs/DEPLOYMENT.md)
 - [Portability status](docs/PORTABILITY.md)
 - [Generic Linux bundle](docs/GENERIC_LINUX.md)
+- [Flatpak prototype](docs/FLATPAK.md)
 - [Configuration](docs/CONFIGURATION.md)
 - [Scene presets](docs/SCENES.md)
 - [Screenshots and demo capture](docs/CAPTURE.md)

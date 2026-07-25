@@ -6,6 +6,10 @@ The project follows a pre-1.0 alpha development model. Interfaces, controls, con
 
 ## Unreleased
 
+### Added
+
+- Local Flatpak manifest, offline Cargo sources, AppStream metadata, bundle workflow, and sandbox testing guide
+
 No unreleased changes yet.
 
 ## [0.1.0-alpha.3] - 2026-07-20

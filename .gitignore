@@ -22,3 +22,9 @@ result
 result-*
 .direnv/
 .*-backup-*/
+
+# Flatpak and distribution build products
+/dist/
+/flatpak-build/
+/flatpak-repo/
+/.flatpak-builder/
