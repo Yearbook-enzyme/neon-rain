@@ -11,7 +11,7 @@ REPO_DIR="flatpak-repo"
 DIST_DIR="dist"
 BUNDLE="$DIST_DIR/neon-rain-${APP_ID}.flatpak"
 
-for command in flatpak flatpak-builder appstreamcli; do
+for command in flatpak flatpak-builder appstreamcli eu-strip eu-elfcompress; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "Missing required command: $command" >&2
     exit 1

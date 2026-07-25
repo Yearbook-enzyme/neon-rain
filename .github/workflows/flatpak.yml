@@ -20,7 +20,7 @@ jobs:
       - name: Install Flatpak builder
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends appstream flatpak flatpak-builder
+          sudo apt-get install -y --no-install-recommends appstream elfutils flatpak flatpak-builder
 
       - name: Configure Flathub
         run: |

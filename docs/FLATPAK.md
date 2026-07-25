@@ -19,7 +19,7 @@ sudo nixos-rebuild switch
 Open a new terminal after rebuilding. The local build also needs `flatpak-builder`; it can be used without permanently installing it:
 
 ```bash
-nix shell nixpkgs#flatpak nixpkgs#flatpak-builder nixpkgs#appstream
+nix shell nixpkgs#flatpak nixpkgs#flatpak-builder nixpkgs#appstream nixpkgs#elfutils
 ```
 
 ## Build, install, and run
@@ -27,7 +27,7 @@ nix shell nixpkgs#flatpak nixpkgs#flatpak-builder nixpkgs#appstream
 From the repository root:
 
 ```bash
-nix shell nixpkgs#flatpak nixpkgs#flatpak-builder nixpkgs#appstream -c scripts/build-flatpak.sh
+nix shell nixpkgs#flatpak nixpkgs#flatpak-builder nixpkgs#appstream nixpkgs#elfutils -c scripts/build-flatpak.sh
 flatpak run io.github.yearbook_enzyme.neon_rain
 ```
 
