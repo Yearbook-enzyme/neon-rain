@@ -11,7 +11,7 @@
 
 # Neon Rain
 
-## Video showcase
+## Video showcase click to play
 [![Watch the Neon Rain showcase](docs/assets/Screenshot_20260725_083326.png)](https://peertube.wtf/w/i5r1HJC8qnMr4LPuips3YJ)
 
 The showcase demonstrates audio reactivity through Strawberry,
