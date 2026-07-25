@@ -2,7 +2,7 @@ name: Flatpak prototype
 
 on:
   push:
-    branches: [ main, "release/**", "feature/flatpak-prototype" ]
+    branches: [ main, "release/**" ]
   pull_request:
   workflow_dispatch:
 
@@ -20,7 +20,7 @@ jobs:
       - name: Install Flatpak builder
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          sudo apt-get install -y --no-install-recommends appstream flatpak flatpak-builder
 
       - name: Configure Flathub
         run: |
