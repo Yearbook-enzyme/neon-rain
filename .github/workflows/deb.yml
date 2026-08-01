@@ -72,7 +72,7 @@ jobs:
           sudo apt-get remove -y neon-rain
 
       - name: Upload Debian package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: neon-rain-debian-amd64
           path: |
